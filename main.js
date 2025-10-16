@@ -6,19 +6,19 @@ const HOMEPAGE = 'https://xs-corp.github.io/ag/';
 const EXT_DIR = path.join(__dirname, 'extensions');
 
 let win;
-let tabs = [];            // { id, view, url, title, canGoBack, canGoForward }
+let tabs = [];
 let activeTabId = null;
 let nextId = 1;
-let downloads = [];       // { id, url, filename, received, total, state, savePath }
-let loadedExtensions = []; // { id, name, version, path }
+let downloads = [];
+let loadedExtensions = [];
 
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
     height: 840,
     backgroundColor: '#0b0b0c',
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 12, y: 14 },
+    titleBarStyle: 'hidden',
+    frame: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -46,7 +46,7 @@ function createWindow() {
 function layoutActiveView() {
   if (!win) return;
   const contentBounds = win.getContentBounds();
-  const topBars = 84; // 36 (tabs) + 48 (toolbar)
+  const topBars = 116; // 32 (drag) + 36 (tabs) + 48 (toolbar)
   const bounds = {
     x: 0,
     y: topBars,
@@ -68,6 +68,19 @@ function detachView(tab) {
   if (!win) return;
   if (tab?.view && win.getBrowserViews().includes(tab.view)) {
     win.removeBrowserView(tab.view);
+  }
+}
+
+function hideAllViews() {
+  tabs.forEach(tab => {
+    detachView(tab);
+  });
+}
+
+function showActiveView() {
+  const active = getActiveTab();
+  if (active) {
+    attachView(active);
   }
 }
 
@@ -102,6 +115,21 @@ function createTab(url) {
   // Обработка ошибок загрузки
   view.webContents.on('did-fail-load', (e, errorCode, errorDescription) => {
     console.warn(`Failed to load ${url}: ${errorDescription}`);
+  });
+
+  // Обработка Fullscreen API
+  view.webContents.on('enter-html-full-screen', () => {
+    console.log('HTML Fullscreen entered');
+    if (view === getActiveTab()?.view) {
+      win.webContents.send('enter-html-fullscreen');
+    }
+  });
+
+  view.webContents.on('leave-html-full-screen', () => {
+    console.log('HTML Fullscreen left');
+    if (view === getActiveTab()?.view) {
+      win.webContents.send('leave-html-fullscreen');
+    }
   });
 
   const id = nextId++;
@@ -272,6 +300,16 @@ ipcMain.handle('nav:reload', () => {
 });
 
 ipcMain.handle('state:get', () => ({ tabs: tabs.map(serializeTab), activeId: activeTabId }));
+
+ipcMain.handle('view:hideActive', () => {
+  hideAllViews();
+  return true;
+});
+
+ipcMain.handle('view:showActive', () => {
+  showActiveView();
+  return true;
+});
 
 ipcMain.handle('dl:list', () => downloads);
 ipcMain.handle('dl:reveal', (_e, id) => {

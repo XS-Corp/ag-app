@@ -12,6 +12,10 @@ contextBridge.exposeInMainWorld('ag', {
   forward: () => ipcRenderer.invoke('nav:forward'),
   reload: () => ipcRenderer.invoke('nav:reload'),
 
+  // view management
+  hideActiveView: () => ipcRenderer.invoke('view:hideActive'),
+  showActiveView: () => ipcRenderer.invoke('view:showActive'),
+
   // state
   getState: () => ipcRenderer.invoke('state:get'),
   onTabsList: (cb) => ipcRenderer.on('tabs:list', (_e, list, activeId) => cb(list, activeId)),
@@ -29,5 +33,9 @@ contextBridge.exposeInMainWorld('ag', {
   // extensions
   extList: () => ipcRenderer.invoke('ext:list'),
   extReload: () => ipcRenderer.invoke('ext:reload'),
-  onExtList: (cb) => ipcRenderer.on('ext:list', (_e, list) => cb(list))
+  onExtList: (cb) => ipcRenderer.on('ext:list', (_e, list) => cb(list)),
+
+  // fullscreen api
+  onEnterHtmlFullscreen: (cb) => ipcRenderer.on('enter-html-fullscreen', () => cb()),
+  onLeaveHtmlFullscreen: (cb) => ipcRenderer.on('leave-html-fullscreen', () => cb())
 });

@@ -24,6 +24,7 @@ let activeId = null;
 let dls = [];
 let exts = [];
 let activePanel = null;
+let isBrowserFullscreen = false;
 
 function isHttp(url) {
     return /^https?:\/\//i.test(url);
@@ -122,6 +123,9 @@ function showPanel(panel) {
     panel.classList.remove('hidden');
     panelOverlay.classList.remove('hidden');
     activePanel = panel;
+    
+    // Скрываем активную вкладку при открытии панели
+    window.ag.hideActiveView();
 }
 
 function hideAllPanels() {
@@ -129,6 +133,9 @@ function hideAllPanels() {
     panelExtensions.classList.add('hidden');
     panelOverlay.classList.add('hidden');
     activePanel = null;
+    
+    // Показываем активную вкладку при закрытии панели
+    window.ag.showActiveView();
 }
 
 // Обработчики для панели загрузок
@@ -308,6 +315,34 @@ window.ag.onDlDone((p) => {
 window.ag.onExtList((list) => {
     exts = list;
     renderExtensions();
+});
+
+// Обработчики полноэкранного режима
+window.ag.onEnterHtmlFullscreen(() => {
+    console.log('Entering HTML fullscreen');
+    document.body.classList.add('browser-fullscreen');
+    isBrowserFullscreen = true;
+    hideAllPanels();
+});
+
+window.ag.onLeaveHtmlFullscreen(() => {
+    console.log('Leaving HTML fullscreen');
+    document.body.classList.remove('browser-fullscreen');
+    isBrowserFullscreen = false;
+});
+
+// Показываем HUD при движении мыши в полноэкранном режиме
+let hideHudTimeout;
+document.addEventListener('mousemove', (e) => {
+    if (isBrowserFullscreen && e.clientY < 100) {
+        document.body.classList.remove('browser-fullscreen');
+        clearTimeout(hideHudTimeout);
+        hideHudTimeout = setTimeout(() => {
+            if (isBrowserFullscreen) {
+                document.body.classList.add('browser-fullscreen');
+            }
+        }, 2000);
+    }
 });
 
 // Инициализация

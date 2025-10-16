@@ -24,21 +24,32 @@ html, body {
   overflow: hidden;
 }
 
-/* Верхняя панель - drag область */
-.top {
+/* Область для перетаскивания окна */
+.drag-region {
   position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  -webkit-app-region: drag;
+  z-index: 10000;
+  background: transparent;
+  transition: opacity 0.3s ease;
+}
+
+/* Верхняя панель */
+.top {
+  position: fixed;
+  top: 32px; /* Отступ для drag-области */
   left: 0;
   right: 0;
   backdrop-filter: blur(14px);
   background: rgba(20,20,22,0.7);
   border-bottom: 1px solid var(--border);
-  -webkit-app-region: drag;
   z-index: 1000;
-  height: 84px;
+  transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
-/* Элементы, которые НЕ должны перетаскивать окно */
 .tabs, .tab, .toolbar, button, input, .close {
   -webkit-app-region: no-drag;
 }
@@ -162,13 +173,14 @@ button.pill { font-weight: 600; }
   bottom: 0;
   background: var(--overlay-bg);
   z-index: 1998;
+  transition: opacity 0.3s ease;
 }
 
 /* Панели */
 .panel {
   position: fixed;
   right: 12px;
-  top: 90px;
+  top: 122px; /* 32px (drag) + 84px (top) + 6px */
   width: 520px;
   max-height: 70vh;
   background: rgba(30,30,34,0.98);
@@ -179,8 +191,11 @@ button.pill { font-weight: 600; }
   z-index: 1999;
   display: flex;
   flex-direction: column;
+  transition: opacity 0.3s ease, transform 0.3s ease;
 }
-.hidden { display: none !important; }
+.hidden {
+  display: none !important;
+}
 .panel-header {
   display: flex;
   align-items: center;
@@ -271,4 +286,26 @@ button.pill { font-weight: 600; }
 .list::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 3px;
+}
+
+/* Стили для полноэкранного режима через F11/Fullscreen API */
+body.browser-fullscreen .drag-region,
+body.browser-fullscreen .top,
+body.browser-fullscreen .panel-overlay,
+body.browser-fullscreen .panel {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-20px);
+}
+
+body.browser-fullscreen .panel {
+  transform: translateY(-100px);
+}
+
+/* Показываем HUD при hover в полноэкранном режиме */
+body.browser-fullscreen:hover .drag-region,
+body.browser-fullscreen:hover .top {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
 }
