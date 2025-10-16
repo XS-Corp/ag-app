@@ -1,7 +1,7 @@
 {
   "name": "ag-app",
   "version": "0.4.0",
-  "description": "Electron-обёртка с вкладками для https://xs-corp.github.io/ag/",
+  "description": "XBrowser",
   "main": "main.js",
   "author": "KickedStorm",
   "license": "MIT",

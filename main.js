@@ -2,7 +2,7 @@ const { app, BrowserWindow, BrowserView, ipcMain, shell, dialog } = require('ele
 const path = require('path');
 const fs = require('fs');
 
-const HOMEPAGE = 'https://xs-corp.github.io/ag/';
+const HOMEPAGE = 'https://google.com/';
 const EXT_DIR = path.join(__dirname, 'extensions');
 
 let win;
