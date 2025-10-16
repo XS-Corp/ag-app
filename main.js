@@ -84,7 +84,7 @@ function showActiveView() {
   }
 }
 
-function createTab(url) {
+function createTab(url, pinned = false) {
   const view = new BrowserView({
     webPreferences: {
       contextIsolation: true,
@@ -133,7 +133,16 @@ function createTab(url) {
   });
 
   const id = nextId++;
-  const tab = { id, view, url, title: 'Loading…', canGoBack: false, canGoForward: false };
+  const tab = {
+    id,
+    view,
+    url,
+    title: 'Loading…',
+    canGoBack: false,
+    canGoForward: false,
+    pinned: pinned,
+    favicon: null
+  };
   tabs.push(tab);
 
   // обновление состояния вкладки
@@ -142,6 +151,15 @@ function createTab(url) {
     tab.title = view.webContents.getTitle() || tab.url || 'New Tab';
     tab.canGoBack = view.webContents.canGoBack();
     tab.canGoForward = view.webContents.canGoForward();
+    
+    // Получаем favicon
+    try {
+      const faviconUrl = view.webContents.getURL().split('/').slice(0, 3).join('/') + '/favicon.ico';
+      tab.favicon = faviconUrl;
+    } catch (e) {
+      tab.favicon = null;
+    }
+    
     if (win) win.webContents.send('tab:updated', serializeTab(tab));
   };
   
@@ -149,6 +167,14 @@ function createTab(url) {
   view.webContents.on('did-navigate', updateState);
   view.webContents.on('did-navigate-in-page', updateState);
   view.webContents.on('did-finish-load', updateState);
+
+  // Обновляем favicon при загрузке
+  view.webContents.on('page-favicon-updated', (event, favicons) => {
+    if (favicons && favicons.length > 0) {
+      tab.favicon = favicons[0];
+      if (win) win.webContents.send('tab:updated', serializeTab(tab));
+    }
+  });
 
   view.webContents.loadURL(url);
   return tab;
@@ -184,6 +210,19 @@ function setActiveTab(id) {
   }
 }
 
+function togglePinTab(id) {
+  const tab = tabs.find(t => t.id === id);
+  if (tab) {
+    tab.pinned = !tab.pinned;
+    if (win) {
+      win.webContents.send('tab:updated', serializeTab(tab));
+      broadcastTabs();
+    }
+    return tab.pinned;
+  }
+  return false;
+}
+
 function getActiveTab() {
   return tabs.find(t => t.id === activeTabId) || null;
 }
@@ -194,7 +233,9 @@ function serializeTab(t) {
     url: t.url,
     title: t.title,
     canGoBack: t.canGoBack,
-    canGoForward: t.canGoForward
+    canGoForward: t.canGoForward,
+    pinned: t.pinned,
+    favicon: t.favicon
   };
 }
 
@@ -261,8 +302,8 @@ function wireDownloads(sess) {
 }
 
 /* ---------- IPC ---------- */
-ipcMain.handle('tabs:create', (_e, url) => {
-  const tab = createTab(url || HOMEPAGE);
+ipcMain.handle('tabs:create', (_e, url, pinned = false) => {
+  const tab = createTab(url || HOMEPAGE, pinned);
   setActiveTab(tab.id);
   return serializeTab(tab);
 });
@@ -275,6 +316,10 @@ ipcMain.handle('tabs:activate', (_e, id) => {
 ipcMain.handle('tabs:close', (_e, id) => {
   closeTab(id);
   return true;
+});
+
+ipcMain.handle('tabs:togglePin', (_e, id) => {
+  return togglePinTab(id);
 });
 
 ipcMain.handle('nav:go', (_e, url) => {

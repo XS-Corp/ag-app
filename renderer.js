@@ -25,6 +25,7 @@ let dls = [];
 let exts = [];
 let activePanel = null;
 let isBrowserFullscreen = false;
+let contextMenu = null;
 
 function isHttp(url) {
     return /^https?:\/\//i.test(url);
@@ -37,22 +38,38 @@ function normalizeUrl(u) {
     if (u.includes('.') && !u.includes(' ')) {
         return `https://${u}`;
     }
-    // Если это не URL, делаем поиск через Google
     return `https://www.google.com/search?q=${encodeURIComponent(u)}`;
 }
 
 function renderTabs() {
     tabsEl.innerHTML = '';
     
-    for (const t of tabs) {
+    // Сортируем вкладки: сначала закрепленные, потом обычные
+    const pinnedTabs = tabs.filter(t => t.pinned);
+    const normalTabs = tabs.filter(t => !t.pinned);
+    const sortedTabs = [...pinnedTabs, ...normalTabs];
+    
+    sortedTabs.forEach(t => {
         const el = document.createElement('div');
-        el.className = 'tab' + (t.id === activeId ? ' active' : '');
+        el.className = 'tab' + (t.id === activeId ? ' active' : '') + (t.pinned ? ' pinned' : '');
         el.title = t.title || t.url;
         el.setAttribute('data-tab-id', t.id);
+
+        const favicon = document.createElement('img');
+        favicon.className = 'favicon';
+        favicon.src = t.favicon || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTggMS4zMzMzQzQuMzIgMS4zMzMzIDEuMzMzMyA0LjMyIDEuMzMzMyA4QzEuMzMzMyAxMS42OCA0LjMyIDE0LjY2NjcgOCAxNC42NjY3QzExLjY4IDE0LjY2NjcgMTQuNjY2NyAxMS42OCAxNC42NjY3IDhDMTQuNjY2NyA0LjMyIDExLjY4IDEuMzMzMyA4IDEuMzMzM1pNOC44NjY2NyA4VjQuNjY2NjdINy4xMzMzM1Y4SDEwLjY2NjdWNi4yNjY2N0g4Ljg2NjY3VjhaIiBmaWxsPSIjOTlhMGE2Ii8+Cjwvc3ZnPgo=';
+        favicon.onerror = () => {
+            favicon.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTggMS4zMzMzQzQuMzIgMS4zMzMzIDEuMzMzMyA0LjMyIDEuMzMzMyA4QzEuMzMzMyAxMS42OCA0LjMyIDE0LjY2NjcgOCAxNC42NjY3QzExLjY4IDE0LjY2NjcgMTQuNjY2NyAxMS42OCAxNC42NjY3IDhDMTQuNjY2NyA0LjMyIDExLjY4IDEuMzMzMyA4IDEuMzMzM1pNOC44NjY2NyA4VjQuNjY2NjdINy4xMzMzM1Y4SDEwLjY2NjdWNi4yNjY2N0g4Ljg2NjY3VjhaIiBmaWxsPSIjOTlhMGE2Ii8+Cjwvc3ZnPgo=';
+        };
 
         const title = document.createElement('div');
         title.className = 'title';
         title.textContent = t.title || t.url || 'New Tab';
+
+        const pinIndicator = document.createElement('div');
+        pinIndicator.className = 'pin-indicator';
+        pinIndicator.innerHTML = '📌';
+        pinIndicator.title = 'Закрепленная вкладка';
 
         const close = document.createElement('div');
         close.className = 'close';
@@ -62,10 +79,101 @@ function renderTabs() {
             window.ag.closeTab(t.id);
         };
 
-        el.onclick = () => window.ag.activateTab(t.id);
+        el.appendChild(favicon);
         el.appendChild(title);
-        el.appendChild(close);
+        if (t.pinned) {
+            el.appendChild(pinIndicator);
+        }
+        if (!t.pinned) {
+            el.appendChild(close);
+        }
+
+        el.onclick = () => window.ag.activateTab(t.id);
+        
+        // Контекстное меню по правому клику
+        el.oncontextmenu = (e) => {
+            e.preventDefault();
+            showTabContextMenu(e.clientX, e.clientY, t);
+        };
+
         tabsEl.appendChild(el);
+    });
+}
+
+function showTabContextMenu(x, y, tab) {
+    // Удаляем старое контекстное меню
+    if (contextMenu) {
+        contextMenu.remove();
+    }
+
+    contextMenu = document.createElement('div');
+    contextMenu.className = 'context-menu';
+    contextMenu.style.left = x + 'px';
+    contextMenu.style.top = y + 'px';
+
+    const menuItems = [
+        {
+            label: tab.pinned ? 'Открепить вкладку' : 'Закрепить вкладку',
+            action: () => window.ag.togglePinTab(tab.id)
+        },
+        {
+            label: 'Закрыть вкладку',
+            action: () => window.ag.closeTab(tab.id)
+        },
+        {
+            label: 'Закрыть другие вкладки',
+            action: () => closeOtherTabs(tab.id)
+        },
+        {
+            label: 'Закрыть вкладки справа',
+            action: () => closeTabsToRight(tab.id)
+        }
+    ];
+
+    menuItems.forEach(item => {
+        const menuItem = document.createElement('div');
+        menuItem.className = 'context-menu-item';
+        menuItem.textContent = item.label;
+        menuItem.onclick = () => {
+            item.action();
+            contextMenu.remove();
+            contextMenu = null;
+        };
+        contextMenu.appendChild(menuItem);
+    });
+
+    document.body.appendChild(contextMenu);
+
+    // Закрываем меню при клике вне его
+    const closeMenu = (e) => {
+        if (contextMenu && !contextMenu.contains(e.target)) {
+            contextMenu.remove();
+            contextMenu = null;
+            document.removeEventListener('click', closeMenu);
+        }
+    };
+    
+    setTimeout(() => {
+        document.addEventListener('click', closeMenu);
+    }, 100);
+}
+
+function closeOtherTabs(keepId) {
+    tabs.forEach(tab => {
+        if (tab.id !== keepId && !tab.pinned) {
+            window.ag.closeTab(tab.id);
+        }
+    });
+}
+
+function closeTabsToRight(tabId) {
+    const tabIndex = tabs.findIndex(t => t.id === tabId);
+    if (tabIndex !== -1) {
+        for (let i = tabIndex + 1; i < tabs.length; i++) {
+            if (!tabs[i].pinned) {
+                window.ag.closeTab(tabs[i].id);
+            }
+        }
     }
 }
 
@@ -124,7 +232,6 @@ function showPanel(panel) {
     panelOverlay.classList.remove('hidden');
     activePanel = panel;
     
-    // Скрываем активную вкладку при открытии панели
     window.ag.hideActiveView();
 }
 
@@ -134,7 +241,6 @@ function hideAllPanels() {
     panelOverlay.classList.add('hidden');
     activePanel = null;
     
-    // Показываем активную вкладку при закрытии панели
     window.ag.showActiveView();
 }
 

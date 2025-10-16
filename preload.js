@@ -2,9 +2,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('ag', {
   // tabs
-  createTab: (url) => ipcRenderer.invoke('tabs:create', url),
+  createTab: (url, pinned = false) => ipcRenderer.invoke('tabs:create', url, pinned),
   activateTab: (id) => ipcRenderer.invoke('tabs:activate', id),
   closeTab: (id) => ipcRenderer.invoke('tabs:close', id),
+  togglePinTab: (id) => ipcRenderer.invoke('tabs:togglePin', id),
 
   // nav
   goTo: (url) => ipcRenderer.invoke('nav:go', url),
