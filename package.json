@@ -29,9 +29,25 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
-      "target": ["dmg","zip"]
+      "icon": "build/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ]
     },
-    "win": { "target": ["nsis"] },
-    "linux": { "target": ["AppImage","deb"], "category": "Utility" }
+    "win": {
+        "icon": "build/icon.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+        "icon": "build/icon.png",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility"
+    }
   }
 }
