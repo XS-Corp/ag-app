@@ -1,0 +1,33 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('ag', {
+  // tabs
+  createTab: (url) => ipcRenderer.invoke('tabs:create', url),
+  activateTab: (id) => ipcRenderer.invoke('tabs:activate', id),
+  closeTab: (id) => ipcRenderer.invoke('tabs:close', id),
+
+  // nav
+  goTo: (url) => ipcRenderer.invoke('nav:go', url),
+  back: () => ipcRenderer.invoke('nav:back'),
+  forward: () => ipcRenderer.invoke('nav:forward'),
+  reload: () => ipcRenderer.invoke('nav:reload'),
+
+  // state
+  getState: () => ipcRenderer.invoke('state:get'),
+  onTabsList: (cb) => ipcRenderer.on('tabs:list', (_e, list, activeId) => cb(list, activeId)),
+  onActiveChanged: (cb) => ipcRenderer.on('tabs:active-changed', (_e, id) => cb(id)),
+  onTabUpdated: (cb) => ipcRenderer.on('tab:updated', (_e, tab) => cb(tab)),
+
+  // downloads
+  dlList: () => ipcRenderer.invoke('dl:list'),
+  dlReveal: (id) => ipcRenderer.invoke('dl:reveal', id),
+  dlClearFinished: () => ipcRenderer.invoke('dl:clear-finished'),
+  onDlCreated: (cb) => ipcRenderer.on('dl:created', (_e, d) => cb(d)),
+  onDlProgress: (cb) => ipcRenderer.on('dl:progress', (_e, d) => cb(d)),
+  onDlDone: (cb) => ipcRenderer.on('dl:done', (_e, d) => cb(d)),
+
+  // extensions
+  extList: () => ipcRenderer.invoke('ext:list'),
+  extReload: () => ipcRenderer.invoke('ext:reload'),
+  onExtList: (cb) => ipcRenderer.on('ext:list', (_e, list) => cb(list))
+});

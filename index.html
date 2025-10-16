@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <!-- CSP только для renderer; BrowserView не ограничиваем -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src * data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src *;">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AG App</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="top">
+    <div class="tabs" id="tabs"></div>
+    <div class="toolbar">
+      <div class="nav-buttons">
+        <button id="btnBack" title="Назад">⟵</button>
+        <button id="btnFwd" title="Вперёд">⟶</button>
+        <button id="btnReload" title="Перезагрузить">⟳</button>
+      </div>
+      <input id="address" type="text" spellcheck="false" placeholder="Введите URL" />
+      <div class="right">
+        <button id="btnDownloads" title="Загрузки">⇩</button>
+        <button id="btnExtensions" title="Расширения">🧩</button>
+        <button id="btnNew" class="pill" title="Новая вкладка">＋</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="panelDownloads" class="panel hidden">
+    <div class="panel-header">
+      <div>Загрузки</div>
+      <div>
+        <button id="btnClearFinished">Очистить завершённые</button>
+        <button id="btnCloseDownloads">✕</button>
+      </div>
+    </div>
+    <div id="downloadsList" class="list"></div>
+  </div>
+
+  <div id="panelExtensions" class="panel hidden">
+    <div class="panel-header">
+      <div>Расширения</div>
+      <div>
+        <button id="btnReloadExt">Перезагрузить</button>
+        <button id="btnCloseExtensions">✕</button>
+      </div>
+    </div>
+    <div id="extensionsList" class="list"></div>
+  </div>
+
+  <script src="./renderer.js"></script>
+</body>
+</html>

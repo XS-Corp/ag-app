@@ -1,0 +1,37 @@
+{
+  "name": "ag-app",
+  "version": "0.3.0",
+  "description": "Electron-обёртка с вкладками для https://xs-corp.github.io/ag/",
+  "main": "main.js",
+  "author": "KickedStorm",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.kickedstorm.agapp",
+    "productName": "AG App",
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "renderer.js",
+      "styles.css",
+      "package.json",
+      "extensions/**"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": ["dmg","zip"]
+    },
+    "win": { "target": ["nsis"] },
+    "linux": { "target": ["AppImage","deb"], "category": "Utility" }
+  }
+}
