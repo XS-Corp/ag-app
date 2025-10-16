@@ -23,7 +23,9 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false
     }
   });
 
@@ -74,20 +76,32 @@ function createTab(url) {
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
-      nativeWindowOpen: false
+      nativeWindowOpen: false,
+      webSecurity: true
     }
   });
 
   // перехват target=_blank / window.open -> в этой же вкладке
   view.webContents.setWindowOpenHandler(({ url }) => {
-    if (!/^https?:/i.test(url)) { shell.openExternal(url); return { action: 'deny' }; }
+    if (!/^https?:/i.test(url)) {
+      shell.openExternal(url);
+      return { action: 'deny' };
+    }
     view.webContents.loadURL(url);
     return { action: 'deny' };
   });
 
   // внешние схемы наружу
   view.webContents.on('will-navigate', (e, url) => {
-    if (!/^https?:/i.test(url)) { e.preventDefault(); shell.openExternal(url); }
+    if (!/^https?:/i.test(url)) {
+      e.preventDefault();
+      shell.openExternal(url);
+    }
+  });
+
+  // Обработка ошибок загрузки
+  view.webContents.on('did-fail-load', (e, errorCode, errorDescription) => {
+    console.warn(`Failed to load ${url}: ${errorDescription}`);
   });
 
   const id = nextId++;
@@ -97,11 +111,12 @@ function createTab(url) {
   // обновление состояния вкладки
   const updateState = () => {
     tab.url = view.webContents.getURL();
-    tab.title = view.webContents.getTitle() || tab.title;
+    tab.title = view.webContents.getTitle() || tab.url || 'New Tab';
     tab.canGoBack = view.webContents.canGoBack();
     tab.canGoForward = view.webContents.canGoForward();
     if (win) win.webContents.send('tab:updated', serializeTab(tab));
   };
+  
   view.webContents.on('page-title-updated', updateState);
   view.webContents.on('did-navigate', updateState);
   view.webContents.on('did-navigate-in-page', updateState);
@@ -146,7 +161,13 @@ function getActiveTab() {
 }
 
 function serializeTab(t) {
-  return { id: t.id, url: t.url, title: t.title, canGoBack: t.canGoBack, canGoForward: t.canGoForward };
+  return {
+    id: t.id,
+    url: t.url,
+    title: t.title,
+    canGoBack: t.canGoBack,
+    canGoForward: t.canGoForward
+  };
 }
 
 function broadcastTabs() {
@@ -212,14 +233,43 @@ function wireDownloads(sess) {
 }
 
 /* ---------- IPC ---------- */
-ipcMain.handle('tabs:create', (_e, url) => { const tab = createTab(url || HOMEPAGE); setActiveTab(tab.id); return serializeTab(tab); });
-ipcMain.handle('tabs:activate', (_e, id) => { setActiveTab(id); return true; });
-ipcMain.handle('tabs:close', (_e, id) => { closeTab(id); return true; });
+ipcMain.handle('tabs:create', (_e, url) => {
+  const tab = createTab(url || HOMEPAGE);
+  setActiveTab(tab.id);
+  return serializeTab(tab);
+});
 
-ipcMain.handle('nav:go', (_e, url) => { const t = getActiveTab(); if (!t) return false; t.view.webContents.loadURL(url); return true; });
-ipcMain.handle('nav:back', () => { const t = getActiveTab(); if (t && t.view.webContents.canGoBack()) t.view.webContents.goBack(); });
-ipcMain.handle('nav:forward', () => { const t = getActiveTab(); if (t && t.view.webContents.canGoForward()) t.view.webContents.goForward(); });
-ipcMain.handle('nav:reload', () => { const t = getActiveTab(); if (t) t.view.webContents.reload(); });
+ipcMain.handle('tabs:activate', (_e, id) => {
+  setActiveTab(id);
+  return true;
+});
+
+ipcMain.handle('tabs:close', (_e, id) => {
+  closeTab(id);
+  return true;
+});
+
+ipcMain.handle('nav:go', (_e, url) => {
+  const t = getActiveTab();
+  if (!t) return false;
+  t.view.webContents.loadURL(url);
+  return true;
+});
+
+ipcMain.handle('nav:back', () => {
+  const t = getActiveTab();
+  if (t && t.view.webContents.canGoBack()) t.view.webContents.goBack();
+});
+
+ipcMain.handle('nav:forward', () => {
+  const t = getActiveTab();
+  if (t && t.view.webContents.canGoForward()) t.view.webContents.goForward();
+});
+
+ipcMain.handle('nav:reload', () => {
+  const t = getActiveTab();
+  if (t) t.view.webContents.reload();
+});
 
 ipcMain.handle('state:get', () => ({ tabs: tabs.map(serializeTab), activeId: activeTabId }));
 
@@ -236,7 +286,9 @@ ipcMain.handle('dl:clear-finished', () => {
 ipcMain.handle('ext:list', () => getExtensionsList());
 ipcMain.handle('ext:reload', async () => {
   const sess = win.webContents.session;
-  for (const ext of loadedExtensions) { try { await sess.removeExtension(ext.id); } catch {} }
+  for (const ext of loadedExtensions) {
+    try { await sess.removeExtension(ext.id); } catch {}
+  }
   await loadAllExtensions(sess);
   if (win) win.webContents.send('ext:list', getExtensionsList());
   return getExtensionsList();

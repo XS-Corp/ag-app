@@ -2,7 +2,6 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <!-- CSP только для renderer; BrowserView не ограничиваем -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src * data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src *;">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AG App</title>
@@ -17,7 +16,7 @@
         <button id="btnFwd" title="Вперёд">⟶</button>
         <button id="btnReload" title="Перезагрузить">⟳</button>
       </div>
-      <input id="address" type="text" spellcheck="false" placeholder="Введите URL" />
+      <input id="address" type="text" spellcheck="false" placeholder="Введите URL или поисковый запрос" />
       <div class="right">
         <button id="btnDownloads" title="Загрузки">⇩</button>
         <button id="btnExtensions" title="Расширения">🧩</button>
@@ -25,6 +24,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Оверлей для панелей -->
+  <div id="panelOverlay" class="panel-overlay hidden"></div>
 
   <div id="panelDownloads" class="panel hidden">
     <div class="panel-header">
