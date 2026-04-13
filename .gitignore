@@ -1,0 +1,24 @@
+# build output
+dist/
+build/
+out/
+
+# electron cache
+node_modules/
+*.log
+
+# mac
+.DS_Store
+
+# vscode
+.vscode/
+
+# temp
+tmp/
+temp/
+
+# optional
+*.AppImage
+*.dmg
+*.exe
+*.deb

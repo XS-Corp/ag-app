@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src * data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src *;">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AG Browser</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./ext-theme.css" />
+</head>
+<body data-theme="dark">
+  <div class="drag-region"></div>
+
+  <div class="top">
+    <div class="tabs" id="tabs"></div>
+    <div class="toolbar">
+      <div class="nav-buttons">
+        <button id="btnBack" title="Back">&#x2190;</button>
+        <button id="btnFwd" title="Forward">&#x2192;</button>
+        <button id="btnReload" title="Reload">&#x21BB;</button>
+      </div>
+      <input id="address" type="text" spellcheck="false" placeholder="" />
+      <div class="right-buttons">
+        <button id="btnDownloads" title="Downloads">&#x2193;</button>
+        <button id="btnExtensions" title="Extensions">&#x2699;</button>
+        <button id="btnSettings" title="Settings">&#x2630;</button>
+        <button id="btnNew" class="btn-new" title="New tab">&#xFF0B;</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="panelOverlay" class="panel-overlay hidden"></div>
+
+  <!-- Downloads -->
+  <div id="panelDownloads" class="panel hidden">
+    <div class="panel-header">
+      <div class="panel-title" data-i18n="downloads">Downloads</div>
+      <div class="panel-actions">
+        <button id="btnClearFinished" data-i18n="clearFinished">Clear finished</button>
+        <button id="btnCloseDownloads" class="btn-icon">&#x2715;</button>
+      </div>
+    </div>
+    <div id="downloadsList" class="list"></div>
+  </div>
+
+  <!-- Extensions -->
+  <div id="panelExtensions" class="panel hidden">
+    <div class="panel-header">
+      <div class="panel-title" data-i18n="extensions">Extensions</div>
+      <div class="panel-actions">
+        <button id="btnImportExt" data-i18n="importJs">Import .js</button>
+        <button id="btnImportZip" data-i18n="importZip">Import .zip</button>
+        <button id="btnReloadExt" data-i18n="reload">Reload</button>
+        <button id="btnCloseExtensions" class="btn-icon">&#x2715;</button>
+      </div>
+    </div>
+    <div id="extensionsList" class="list"></div>
+  </div>
+
+  <!-- Settings -->
+  <div id="panelSettings" class="panel hidden">
+    <div class="panel-header">
+      <div class="panel-title" data-i18n="settings">Settings</div>
+      <div class="panel-actions">
+        <button id="btnCloseSettings" class="btn-icon">&#x2715;</button>
+      </div>
+    </div>
+    <div class="settings-body">
+      <div class="setting-row">
+        <label data-i18n="theme">Theme</label>
+        <div class="setting-control">
+          <button id="btnThemeDark" class="theme-btn" data-theme-val="dark">Dark</button>
+          <button id="btnThemeLight" class="theme-btn" data-theme-val="light">Light</button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <label data-i18n="language">Language</label>
+        <div class="setting-control">
+          <button id="btnLangRu" class="lang-btn" data-lang-val="ru">Russian</button>
+          <button id="btnLangEn" class="lang-btn" data-lang-val="en">English</button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <label data-i18n="homepage">Homepage</label>
+        <div class="setting-control setting-control-wide">
+          <input id="inputHomepage" type="text" spellcheck="false" placeholder="https://example.com" />
+          <button id="btnSaveHomepage" data-i18n="save">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./renderer.js"></script>
+</body>
+</html>

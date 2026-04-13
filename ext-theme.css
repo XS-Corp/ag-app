@@ -1,0 +1,181 @@
+/* ===== AG Extension: Enhanced UI ===== */
+
+/* --- Accent redefined to violet-blue gradient feel --- */
+[data-theme="dark"] {
+  --accent: #818cf8;
+  --accent-hover: #a5b4fc;
+  --accent-glow: rgba(129,140,248,0.18);
+  --bg: #09090b;
+  --bg-secondary: #111113;
+  --tab-bg: rgba(255,255,255,0.04);
+  --tab-hover: rgba(255,255,255,0.07);
+  --tab-active: rgba(129,140,248,0.12);
+  --border: rgba(255,255,255,0.07);
+  --border-strong: rgba(255,255,255,0.12);
+  --panel-bg: rgba(14,14,16,0.97);
+  --pin-bg: rgba(129,140,248,0.08);
+  --pin-border: rgba(129,140,248,0.22);
+}
+
+[data-theme="light"] {
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+  --accent-glow: rgba(99,102,241,0.14);
+  --bg: #fafafa;
+  --bg-secondary: #ffffff;
+  --tab-active: rgba(99,102,241,0.1);
+  --pin-bg: rgba(99,102,241,0.07);
+  --pin-border: rgba(99,102,241,0.2);
+}
+
+/* --- Top bar: glassmorphism upgrade --- */
+.top {
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 var(--border);
+}
+
+/* --- Tabs: rounder, smoother --- */
+.tab {
+  border-radius: 10px;
+  padding: 5px 14px;
+  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.tab.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-glow), var(--shadow-sm);
+}
+
+.tab .title {
+  font-size: 12px;
+  letter-spacing: -0.015em;
+}
+
+/* --- Address bar: pill shape --- */
+#address {
+  border-radius: 20px;
+  padding: 5px 18px;
+  font-size: 12.5px;
+  letter-spacing: -0.01em;
+}
+#address:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* --- Nav buttons: circular --- */
+.nav-buttons button {
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+}
+
+/* --- Right buttons: pill --- */
+.right-buttons button {
+  border-radius: 10px;
+}
+
+/* --- New tab button: gradient --- */
+.btn-new {
+  background: linear-gradient(135deg, var(--accent), #a855f7) !important;
+  border: none !important;
+  border-radius: 10px !important;
+  font-size: 16px !important;
+}
+
+/* --- Panels: more refined --- */
+.panel {
+  border-radius: 18px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px var(--border-strong);
+}
+
+.panel-header {
+  padding: 16px 20px 14px;
+}
+
+.panel-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+/* --- List items --- */
+.item {
+  border-radius: 12px;
+  padding: 13px 16px;
+  background: var(--tab-bg);
+  transition: background 0.12s, border-color 0.12s, transform 0.1s;
+}
+.item:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+/* --- Progress bar: accent glow --- */
+.progress > div {
+  background: linear-gradient(90deg, var(--accent), #a855f7);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* --- Badges --- */
+.badge {
+  font-size: 10.5px;
+  border-radius: 6px;
+  padding: 2px 7px;
+}
+
+/* --- Context menu --- */
+.context-menu {
+  border-radius: 14px;
+  padding: 5px;
+}
+.context-menu-item {
+  border-radius: 8px;
+  font-size: 12.5px;
+  padding: 7px 14px;
+}
+.context-menu-item:hover {
+  background: linear-gradient(90deg, var(--accent), #a855f7);
+  color: #fff;
+}
+
+/* --- Settings --- */
+.theme-btn.active, .lang-btn.active {
+  background: linear-gradient(135deg, var(--accent), #a855f7);
+  border-color: transparent;
+}
+
+#btnSaveHomepage {
+  background: linear-gradient(135deg, var(--accent), #a855f7);
+  border-radius: 10px;
+}
+#btnSaveHomepage:hover {
+  opacity: 0.88;
+  background: linear-gradient(135deg, var(--accent), #a855f7);
+}
+
+/* --- Scrollbar: thin accent --- */
+.list::-webkit-scrollbar { width: 4px; }
+.list::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 4px;
+  opacity: 0.5;
+}
+
+/* --- Spinner: accent coloured --- */
+.tab-spinner {
+  border-top-color: var(--accent);
+}
+
+/* --- Tab close button: rounder --- */
+.tab .close {
+  border-radius: 50%;
+  width: 16px; height: 16px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+}
