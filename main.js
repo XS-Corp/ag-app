@@ -5,7 +5,6 @@ const { pathToFileURL } = require('url');
 const AdmZip = require('adm-zip');
 
 const APP_ROOT = __dirname;
-const BUNDLED_EXT_DIR = path.join(APP_ROOT, 'extensions');
 const DEFAULT_HOMEPAGE = 'https://search.kickedstorm.com/';
 const EMPTY_EXT_THEME = '/* no extension theme active */\n';
 
@@ -22,6 +21,13 @@ let activeHtmlOverridePath = null;
 
 function getRuntimeRoot() {
   return app.getPath('userData');
+}
+
+function getBundledExtensionsDir() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'app.asar.unpacked', 'extensions');
+  }
+  return path.join(APP_ROOT, 'extensions');
 }
 
 function getRuntimeExtensionsDir() {
@@ -53,14 +59,15 @@ function ensureRuntimeFiles() {
 
 function syncBundledExtensions() {
   ensureRuntimeFiles();
-  if (!fs.existsSync(BUNDLED_EXT_DIR)) return;
+  const bundledExtDir = getBundledExtensionsDir();
+  if (!fs.existsSync(bundledExtDir)) return;
 
-  const bundledDirs = fs.readdirSync(BUNDLED_EXT_DIR, { withFileTypes: true })
+  const bundledDirs = fs.readdirSync(bundledExtDir, { withFileTypes: true })
     .filter(d => d.isDirectory() && !d.name.startsWith('.'));
 
   for (const dir of bundledDirs) {
     if (store.extensions?.[dir.name]?.removed) continue;
-    const src = path.join(BUNDLED_EXT_DIR, dir.name);
+    const src = path.join(bundledExtDir, dir.name);
     const dst = path.join(getRuntimeExtensionsDir(), dir.name);
     fs.cpSync(src, dst, { recursive: true, force: true });
   }
@@ -962,7 +969,7 @@ ipcMain.handle('ext:importZip', async () => {
 ipcMain.handle('ext:remove', async (_e, extId) => {
   const ext = loadedExtensions.find(x => x.id === extId || x.dirName === extId);
   if (!ext) return false;
-  const isBundled = fs.existsSync(path.join(BUNDLED_EXT_DIR, ext.dirName));
+  const isBundled = fs.existsSync(path.join(getBundledExtensionsDir(), ext.dirName));
 
   if (ext.path && fs.existsSync(ext.path)) fs.rmSync(ext.path, { recursive: true, force: true });
   if (isBundled) {

@@ -18,13 +18,15 @@
   "build": {
     "appId": "com.kickedstorm.agbrowser",
     "productName": "AG Browser",
+    "asarUnpack": [
+      "extensions/**"
+    ],
     "files": [
       "main.js",
       "preload.js",
       "index.html",
       "renderer.js",
       "styles.css",
-      "ext-theme.css",
       "package.json",
       "extensions/**"
     ],
