@@ -39,7 +39,11 @@ const i18n = {
     back: 'Назад',
     forward: 'Вперёд',
     reloadPage: 'Перезагрузить',
-    newTab: 'Новая вкладка'
+    newTab: 'Новая вкладка',
+    minimizeWindow: 'Свернуть окно',
+    maximizeWindow: 'Развернуть окно',
+    restoreWindow: 'Восстановить окно',
+    closeWindow: 'Закрыть окно'
   },
   en: {
     downloads: 'Downloads',
@@ -80,7 +84,11 @@ const i18n = {
     back: 'Back',
     forward: 'Forward',
     reloadPage: 'Reload',
-    newTab: 'New tab'
+    newTab: 'New tab',
+    minimizeWindow: 'Minimize window',
+    maximizeWindow: 'Maximize window',
+    restoreWindow: 'Restore window',
+    closeWindow: 'Close window'
   }
 };
 
@@ -92,6 +100,10 @@ function applyI18n() {
     const key = el.getAttribute('data-i18n');
     el.textContent = t(key);
   });
+  btnMinimizeWindow.title = t('minimizeWindow');
+  btnMinimizeWindow.setAttribute('aria-label', t('minimizeWindow'));
+  btnCloseWindow.title = t('closeWindow');
+  btnCloseWindow.setAttribute('aria-label', t('closeWindow'));
   address.placeholder = t('addressPlaceholder');
   btnBack.title = t('back');
   btnFwd.title = t('forward');
@@ -106,9 +118,13 @@ function applyI18n() {
   btnThemeLight.textContent = t('light');
   btnLangRu.textContent = t('russian');
   btnLangEn.textContent = t('english');
+  applyWindowState(windowState);
 }
 
 /* ===== DOM refs ===== */
+const btnMinimizeWindow = document.getElementById('btnMinimizeWindow');
+const btnToggleMaximizeWindow = document.getElementById('btnToggleMaximizeWindow');
+const btnCloseWindow = document.getElementById('btnCloseWindow');
 const tabsEl = document.getElementById('tabs');
 const btnBack = document.getElementById('btnBack');
 const btnFwd = document.getElementById('btnFwd');
@@ -147,6 +163,8 @@ let activePanel = null;
 let isBrowserFullscreen = false;
 let contextMenu = null;
 let settings = {};
+let extThemeHref = '';
+let windowState = { isMaximized: false };
 
 /* ===== Helpers ===== */
 function isHttp(url) { return /^https?:\/\//i.test(url); }
@@ -176,6 +194,30 @@ function fmtBytes(n) {
 function getStateText(state) {
   const map = { progressing: 'progressing', completed: 'completed', cancelled: 'cancelled', interrupted: 'interrupted' };
   return t(map[state] || state);
+}
+
+function ensureRuntimeThemeLink(cacheBust = false) {
+  if (!extThemeHref) return;
+
+  let link = document.getElementById('ext-theme-runtime');
+  if (!link) {
+    link = document.createElement('link');
+    link.id = 'ext-theme-runtime';
+    link.rel = 'stylesheet';
+    document.head.appendChild(link);
+  }
+
+  const base = extThemeHref.split('?')[0];
+  link.href = cacheBust ? `${base}?t=${Date.now()}` : base;
+}
+
+function applyWindowState(nextState = {}) {
+  windowState = { ...windowState, ...nextState };
+  const isMaximized = !!windowState.isMaximized;
+  btnToggleMaximizeWindow.classList.toggle('is-maximized', isMaximized);
+  const label = t(isMaximized ? 'restoreWindow' : 'maximizeWindow');
+  btnToggleMaximizeWindow.title = label;
+  btnToggleMaximizeWindow.setAttribute('aria-label', label);
 }
 
 /* ===== Theme / Settings ===== */
@@ -317,6 +359,12 @@ btnBack.onclick = () => window.ag.back();
 btnFwd.onclick = () => window.ag.forward();
 btnReload.onclick = () => window.ag.reload();
 btnNew.onclick = () => window.ag.createTab(settings.homepage || '');
+btnMinimizeWindow.onclick = () => window.ag.windowMinimize();
+btnToggleMaximizeWindow.onclick = async () => {
+  const nextState = await window.ag.windowToggleMaximize();
+  applyWindowState(nextState);
+};
+btnCloseWindow.onclick = () => window.ag.windowClose();
 
 address.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
@@ -477,6 +525,7 @@ window.ag.onDlCreated((d) => { dls.push(d); renderDownloads(); });
 window.ag.onDlProgress((p) => { const i = dls.findIndex(x => x.id === p.id); if (i !== -1) { dls[i] = { ...dls[i], ...p }; renderDownloads(); } });
 window.ag.onDlDone((p) => { const i = dls.findIndex(x => x.id === p.id); if (i !== -1) { dls[i] = { ...dls[i], ...p }; renderDownloads(); } });
 window.ag.onExtList((list) => { exts = list; renderExtensions(); });
+window.ag.onWindowState((nextState) => applyWindowState(nextState));
 
 // Focus address bar (triggered by Cmd/Ctrl+L from menu)
 window.ag.onFocusAddress(() => {
@@ -486,12 +535,7 @@ window.ag.onFocusAddress(() => {
 
 // CSS hot-reload for extension theme toggling
 window.ag.onReloadCss(() => {
-  const link = document.querySelector('link[href*="ext-theme"]');
-  if (link) {
-    // Force browser to refetch by appending cache-busting param
-    const base = link.href.split('?')[0];
-    link.href = base + '?t=' + Date.now();
-  }
+  ensureRuntimeThemeLink(true);
 });
 
 // UI visibility
@@ -504,10 +548,17 @@ document.addEventListener('keydown', (e) => { if (e.key === 'F11') { e.preventDe
 /* ===== Init ===== */
 (async () => {
   // Load settings first
+  extThemeHref = await window.ag.extThemeHref();
+  ensureRuntimeThemeLink();
+  applyWindowState(await window.ag.windowGetState());
+
   settings = await window.ag.settingsGet();
   applyTheme(settings.theme || 'dark');
   currentLang = settings.lang || 'ru';
   applyI18n();
+
+  exts = await window.ag.extList();
+  renderExtensions();
 
   // Load tabs
   const state = await window.ag.getState();

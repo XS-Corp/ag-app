@@ -1,5 +1,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+window.addEventListener('DOMContentLoaded', () => {
+  document.documentElement.dataset.platform = process.platform;
+});
+
 contextBridge.exposeInMainWorld('ag', {
   // tabs
   createTab: (url, pinned = false) => ipcRenderer.invoke('tabs:create', url, pinned),
@@ -33,6 +37,7 @@ contextBridge.exposeInMainWorld('ag', {
 
   // extensions
   extList: () => ipcRenderer.invoke('ext:list'),
+  extThemeHref: () => ipcRenderer.invoke('runtime:extThemeHref'),
   extReload: () => ipcRenderer.invoke('ext:reload'),
   extImport: () => ipcRenderer.invoke('ext:import'),
   extImportZip: () => ipcRenderer.invoke('ext:importZip'),
@@ -48,6 +53,13 @@ contextBridge.exposeInMainWorld('ag', {
   // UI visibility
   toggleUiHide: () => ipcRenderer.invoke('ui:toggleHide'),
   onUiVisibility: (cb) => ipcRenderer.on('ui-visibility', (_e, visible) => cb(visible)),
+
+  // window chrome
+  windowGetState: () => ipcRenderer.invoke('window:getState'),
+  windowMinimize: () => ipcRenderer.invoke('window:minimize'),
+  windowToggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
+  windowClose: () => ipcRenderer.invoke('window:close'),
+  onWindowState: (cb) => ipcRenderer.on('window:state', (_e, state) => cb(state)),
 
   // CSS reload (for extension theme changes)
   onReloadCss: (cb) => ipcRenderer.on('reload-css', () => cb()),

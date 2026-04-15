@@ -1,14 +1,13 @@
 const { app, BrowserWindow, BrowserView, ipcMain, shell, dialog, globalShortcut, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 const AdmZip = require('adm-zip');
 
-const EXT_DIR = path.join(__dirname, 'extensions');
-const BACKUP_DIR = path.join(__dirname, 'extensions', '.backups');
+const APP_ROOT = __dirname;
+const BUNDLED_EXT_DIR = path.join(APP_ROOT, 'extensions');
 const DEFAULT_HOMEPAGE = 'https://search.kickedstorm.com/';
-
-const BROWSER_ROOT = __dirname;
-const EXT_THEME_FILE = path.join(BROWSER_ROOT, 'ext-theme.css');
+const EMPTY_EXT_THEME = '/* no extension theme active */\n';
 
 let win;
 let tabs = [];
@@ -19,6 +18,102 @@ let loadedExtensions = [];
 let uiHidden = false;
 let store = {};
 let closedTabsStack = []; // for Cmd/Ctrl+Shift+T (reopen closed tab)
+let activeHtmlOverridePath = null;
+
+function getRuntimeRoot() {
+  return app.getPath('userData');
+}
+
+function getRuntimeExtensionsDir() {
+  return path.join(getRuntimeRoot(), 'extensions');
+}
+
+function getRuntimeThemeFile() {
+  return path.join(getRuntimeRoot(), 'ext-theme.css');
+}
+
+function getBundledIndexHtml() {
+  return path.join(APP_ROOT, 'index.html');
+}
+
+function getCurrentIndexHtml() {
+  return activeHtmlOverridePath || getBundledIndexHtml();
+}
+
+function getRuntimeThemeHref() {
+  return pathToFileURL(getRuntimeThemeFile()).toString();
+}
+
+function ensureRuntimeFiles() {
+  fs.mkdirSync(getRuntimeExtensionsDir(), { recursive: true });
+  if (!fs.existsSync(getRuntimeThemeFile())) {
+    fs.writeFileSync(getRuntimeThemeFile(), EMPTY_EXT_THEME);
+  }
+}
+
+function syncBundledExtensions() {
+  ensureRuntimeFiles();
+  if (!fs.existsSync(BUNDLED_EXT_DIR)) return;
+
+  const bundledDirs = fs.readdirSync(BUNDLED_EXT_DIR, { withFileTypes: true })
+    .filter(d => d.isDirectory() && !d.name.startsWith('.'));
+
+  for (const dir of bundledDirs) {
+    if (store.extensions?.[dir.name]?.removed) continue;
+    const src = path.join(BUNDLED_EXT_DIR, dir.name);
+    const dst = path.join(getRuntimeExtensionsDir(), dir.name);
+    fs.cpSync(src, dst, { recursive: true, force: true });
+  }
+}
+
+function resetRuntimeTheme() {
+  ensureRuntimeFiles();
+  fs.writeFileSync(getRuntimeThemeFile(), EMPTY_EXT_THEME);
+}
+
+async function unloadLoadedExtensions(sess) {
+  for (const ext of loadedExtensions) {
+    if (ext.enabled && !ext.loadError) {
+      try {
+        await sess.removeExtension(ext.id);
+      } catch {}
+    }
+  }
+}
+
+async function refreshExtensionsAndUi() {
+  if (!win) return;
+
+  const sess = win.webContents.session;
+  const previousIndexHtml = getCurrentIndexHtml();
+  await unloadLoadedExtensions(sess);
+  await loadAllExtensions(sess);
+
+  const nextIndexHtml = getCurrentIndexHtml();
+  const needsFullReload =
+    previousIndexHtml !== nextIndexHtml ||
+    previousIndexHtml !== getBundledIndexHtml() ||
+    nextIndexHtml !== getBundledIndexHtml();
+
+  if (needsFullReload) {
+    await win.loadFile(nextIndexHtml);
+  } else {
+    win.webContents.send('reload-css');
+  }
+
+  win.webContents.send('ext:list', getExtensionsList());
+}
+
+function getWindowState() {
+  if (!win) return { isMaximized: false };
+  return {
+    isMaximized: win.isMaximized()
+  };
+}
+
+function emitWindowState() {
+  if (win) win.webContents.send('window:state', getWindowState());
+}
 
 /* ---------- Persistent Store ---------- */
 function storeFile() {
@@ -65,6 +160,8 @@ app.commandLine.appendSwitch('js-flags', '--wasm-staging');
 /* ---------- Window ---------- */
 async function createWindow() {
   loadStore();
+  ensureRuntimeFiles();
+  syncBundledExtensions();
 
   win = new BrowserWindow({
     width: 1280,
@@ -82,19 +179,28 @@ async function createWindow() {
       allowRunningInsecureContent: false
     }
   });
-
-  win.loadFile(path.join(__dirname, 'index.html'));
+  buildAppMenu();
 
   win.on('resize', layoutActiveView);
-  win.on('maximize', layoutActiveView);
-  win.on('unmaximize', layoutActiveView);
-  win.on('enter-full-screen', layoutActiveView);
+  win.on('maximize', () => {
+    layoutActiveView();
+    emitWindowState();
+  });
+  win.on('unmaximize', () => {
+    layoutActiveView();
+    emitWindowState();
+  });
+  win.on('enter-full-screen', () => {
+    layoutActiveView();
+    emitWindowState();
+  });
   win.on('leave-full-screen', () => {
     if (uiHidden) {
       uiHidden = false;
       win.webContents.send('ui-visibility', true);
     }
     layoutActiveView();
+    emitWindowState();
   });
 
   // User-Agent
@@ -107,8 +213,18 @@ async function createWindow() {
   wireDownloads(sess);
 
   // Load extensions BEFORE creating any tabs so content scripts are ready
-  await loadAllExtensions(sess);
+  try {
+    await loadAllExtensions(sess);
+  } catch (e) {
+    console.warn('Failed to initialize extensions:', e.message);
+    loadedExtensions = [];
+    activeHtmlOverridePath = null;
+    resetRuntimeTheme();
+  }
+
+  await win.loadFile(getCurrentIndexHtml());
   win.webContents.send('ext:list', getExtensionsList());
+  emitWindowState();
 
   globalShortcut.register('F11', () => {
     uiHidden = !uiHidden;
@@ -133,9 +249,6 @@ async function createWindow() {
 
   // Mouse back/forward buttons (4 & 5) on BrowserView
   // Handled via before-input-event on each view -- see createTab
-
-  // Build application menu with keyboard shortcuts
-  buildAppMenu();
 
   // Restore pinned tabs
   const pinnedUrls = store.pinnedTabs || [];
@@ -304,7 +417,7 @@ function buildAppMenu() {
 function layoutActiveView() {
   if (!win) return;
   const contentBounds = win.getContentBounds();
-  const topBars = uiHidden ? 0 : 116;
+  const topBars = uiHidden ? 0 : 120;
   const bounds = {
     x: 0,
     y: topBars,
@@ -518,10 +631,16 @@ function broadcastTabs() {
 /* ---------- Extensions ---------- */
 async function loadAllExtensions(sess) {
   loadedExtensions = [];
-  if (!fs.existsSync(EXT_DIR)) return;
-  const dirs = fs.readdirSync(EXT_DIR, { withFileTypes: true })
-    .filter(d => d.isDirectory())
-    .map(d => path.join(EXT_DIR, d.name));
+  activeHtmlOverridePath = null;
+  ensureRuntimeFiles();
+  syncBundledExtensions();
+  resetRuntimeTheme();
+
+  const runtimeExtDir = getRuntimeExtensionsDir();
+  if (!fs.existsSync(runtimeExtDir)) return;
+  const dirs = fs.readdirSync(runtimeExtDir, { withFileTypes: true })
+    .filter(d => d.isDirectory() && !d.name.startsWith('.'))
+    .map(d => path.join(runtimeExtDir, d.name));
 
   for (const d of dirs) {
     const dirName = path.basename(d);
@@ -539,27 +658,21 @@ async function loadAllExtensions(sess) {
 
     // Detect if this is a zip-type extension (has browser.html or browser.css)
     const isZip = fs.existsSync(path.join(d, 'browser.html')) || fs.existsSync(path.join(d, 'browser.css'));
-    const hasOverrides = hasActiveOverrides(dirName);
 
     if (enabled) {
       // Apply zip overrides if needed
       if (isZip) {
-        applyZipOverrides(d, dirName);
+        applyZipOverrides(d);
       }
 
       try {
         const ext = await sess.loadExtension(d, { allowFileAccess: true });
-        loadedExtensions.push({ id: ext.id, name: ext.name, version: ext.version, path: d, enabled: true, hasPopup, dirName, isZip, hasOverrides: isZip || hasOverrides });
+        loadedExtensions.push({ id: ext.id, name: ext.name, version: ext.version, path: d, enabled: true, hasPopup, dirName, isZip, hasOverrides: isZip });
       } catch (e) {
         console.warn('Extension load failed:', d, e.message);
-        loadedExtensions.push({ id: dirName, name: dirName, version: '?', path: d, enabled: true, hasPopup, dirName, loadError: true, isZip, hasOverrides: isZip || hasOverrides });
+        loadedExtensions.push({ id: dirName, name: dirName, version: '?', path: d, enabled: true, hasPopup, dirName, loadError: true, isZip, hasOverrides: isZip });
       }
     } else {
-      // Disabled - restore backups if this zip ext had overrides
-      if (hasOverrides) {
-        removeOverrides(dirName);
-      }
-
       let name = dirName, version = '?';
       if (fs.existsSync(mfPath)) {
         try {
@@ -578,69 +691,32 @@ function getExtensionsList() { return loadedExtensions.map(e => ({ id: e.id, nam
 function saveExtensionState(dirName, enabled) {
   if (!store.extensions[dirName]) store.extensions[dirName] = {};
   store.extensions[dirName].enabled = enabled;
+  delete store.extensions[dirName].removed;
   saveStore();
 }
 
 /* ---------- ZIP Extension Helpers ---------- */
-function ensureBackupDir() {
-  if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
-}
-
-// Back up original index.html before a zip extension overwrites it
-function backupIndexHtml(extDirName) {
-  ensureBackupDir();
-  const backupSubDir = path.join(BACKUP_DIR, extDirName);
-  if (!fs.existsSync(backupSubDir)) fs.mkdirSync(backupSubDir, { recursive: true });
-  const src = path.join(BROWSER_ROOT, 'index.html');
-  const dst = path.join(backupSubDir, 'index.html');
-  if (fs.existsSync(src) && !fs.existsSync(dst)) {
-    fs.copyFileSync(src, dst);
-  }
-}
-
 // Apply zip extension overrides:
-//   browser.css -> ext-theme.css (layered on top of styles.css, NOT replacing it)
-//   browser.html -> index.html (full replacement, backed up first)
-function applyZipOverrides(extDir, extDirName) {
+//   browser.css -> runtime ext-theme.css in userData
+//   browser.html -> alternate entry file loaded directly by BrowserWindow
+function applyZipOverrides(extDir) {
   const applied = [];
 
-  // CSS: copy as ext-theme.css (additive, loaded via <link> in index.html)
+  // CSS: copy as runtime ext-theme.css (additive, loaded by renderer)
   const cssSrc = path.join(extDir, 'browser.css');
   if (fs.existsSync(cssSrc)) {
-    fs.copyFileSync(cssSrc, EXT_THEME_FILE);
+    fs.copyFileSync(cssSrc, getRuntimeThemeFile());
     applied.push('ext-theme.css');
   }
 
-  // HTML: full replacement (backup original first)
+  // HTML: use extension file directly instead of overwriting packaged assets
   const htmlSrc = path.join(extDir, 'browser.html');
   if (fs.existsSync(htmlSrc)) {
-    backupIndexHtml(extDirName);
-    fs.copyFileSync(htmlSrc, path.join(BROWSER_ROOT, 'index.html'));
+    activeHtmlOverridePath = htmlSrc;
     applied.push('index.html');
   }
 
   return applied;
-}
-
-// Remove overrides: clear ext-theme.css, restore index.html if backed up
-function removeOverrides(extDirName) {
-  // Write empty file instead of deleting (avoids 404 caching issues)
-  fs.writeFileSync(EXT_THEME_FILE, '/* no extension theme active */\n');
-
-  // Restore original index.html from backup
-  const backupSubDir = path.join(BACKUP_DIR, extDirName);
-  if (fs.existsSync(backupSubDir)) {
-    const backupHtml = path.join(backupSubDir, 'index.html');
-    if (fs.existsSync(backupHtml)) {
-      fs.copyFileSync(backupHtml, path.join(BROWSER_ROOT, 'index.html'));
-    }
-    fs.rmSync(backupSubDir, { recursive: true, force: true });
-  }
-}
-
-// Check if a zip extension has overrides active
-function hasActiveOverrides(extDirName) {
-  return fs.existsSync(path.join(BACKUP_DIR, extDirName)) || fs.existsSync(EXT_THEME_FILE);
 }
 
 // If a zip extracted with a single subfolder wrapping everything, move contents up
@@ -747,6 +823,23 @@ ipcMain.handle('ui:toggleHide', () => {
   return uiHidden;
 });
 
+ipcMain.handle('window:getState', () => getWindowState());
+ipcMain.handle('window:minimize', () => {
+  if (win) win.minimize();
+  return getWindowState();
+});
+ipcMain.handle('window:toggleMaximize', () => {
+  if (win) {
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+  }
+  return getWindowState();
+});
+ipcMain.handle('window:close', () => {
+  if (win) win.close();
+  return true;
+});
+
 ipcMain.handle('view:hideActive', () => { hideAllViews(); return true; });
 ipcMain.handle('view:showActive', () => { showActiveView(); return true; });
 
@@ -757,13 +850,12 @@ ipcMain.handle('dl:clear-finished', () => { downloads = downloads.filter(d => d.
 
 // Extensions
 ipcMain.handle('ext:list', () => getExtensionsList());
+ipcMain.handle('runtime:extThemeHref', () => {
+  ensureRuntimeFiles();
+  return getRuntimeThemeHref();
+});
 ipcMain.handle('ext:reload', async () => {
-  const sess = win.webContents.session;
-  for (const ext of loadedExtensions) {
-    if (ext.enabled && !ext.loadError) { try { await sess.removeExtension(ext.id); } catch {} }
-  }
-  await loadAllExtensions(sess);
-  if (win) win.webContents.send('ext:list', getExtensionsList());
+  await refreshExtensionsAndUi();
   return getExtensionsList();
 });
 
@@ -774,11 +866,11 @@ ipcMain.handle('ext:import', async () => {
     properties: ['openFile', 'multiSelections']
   });
   if (canceled || !filePaths.length) return { success: false };
-  if (!fs.existsSync(EXT_DIR)) fs.mkdirSync(EXT_DIR, { recursive: true });
+  ensureRuntimeFiles();
 
   for (const srcPath of filePaths) {
     const baseName = path.basename(srcPath, '.js');
-    const extDir = path.join(EXT_DIR, baseName);
+    const extDir = path.join(getRuntimeExtensionsDir(), baseName);
     if (!fs.existsSync(extDir)) fs.mkdirSync(extDir, { recursive: true });
     const manifestPath = path.join(extDir, 'manifest.json');
     if (!fs.existsSync(manifestPath)) {
@@ -792,12 +884,7 @@ ipcMain.handle('ext:import', async () => {
     saveExtensionState(baseName, true);
   }
 
-  const sess = win.webContents.session;
-  for (const ext of loadedExtensions) {
-    if (ext.enabled && !ext.loadError) { try { await sess.removeExtension(ext.id); } catch {} }
-  }
-  await loadAllExtensions(sess);
-  if (win) win.webContents.send('ext:list', getExtensionsList());
+  await refreshExtensionsAndUi();
   return { success: true };
 });
 
@@ -808,15 +895,13 @@ ipcMain.handle('ext:importZip', async () => {
     properties: ['openFile', 'multiSelections']
   });
   if (canceled || !filePaths.length) return { success: false };
-  if (!fs.existsSync(EXT_DIR)) fs.mkdirSync(EXT_DIR, { recursive: true });
-
-  let needsReload = false;
+  ensureRuntimeFiles();
 
   for (const zipPath of filePaths) {
     try {
       const zip = new AdmZip(zipPath);
       const baseName = path.basename(zipPath, '.zip');
-      const extDir = path.join(EXT_DIR, baseName);
+      const extDir = path.join(getRuntimeExtensionsDir(), baseName);
 
       // Extract to temp location first
       if (!fs.existsSync(extDir)) fs.mkdirSync(extDir, { recursive: true });
@@ -858,8 +943,7 @@ ipcMain.handle('ext:importZip', async () => {
       const hasBrowserCss = fs.existsSync(path.join(extDir, 'browser.css'));
 
       if (hasBrowserHtml || hasBrowserCss) {
-        applyZipOverrides(extDir, baseName);
-        needsReload = true;
+        applyZipOverrides(extDir);
       }
 
       saveExtensionState(baseName, true);
@@ -871,105 +955,35 @@ ipcMain.handle('ext:importZip', async () => {
     }
   }
 
-  // Reload extensions in session
-  const sess = win.webContents.session;
-  for (const ext of loadedExtensions) {
-    if (ext.enabled && !ext.loadError) { try { await sess.removeExtension(ext.id); } catch {} }
-  }
-  await loadAllExtensions(sess);
-  if (win) win.webContents.send('ext:list', getExtensionsList());
-
-  // If browser UI files were overridden, reload the window
-  if (needsReload && win) {
-    win.loadFile(path.join(__dirname, 'index.html'));
-  }
-
-  return { success: true, reloaded: needsReload };
+  await refreshExtensionsAndUi();
+  return { success: true, reloaded: true };
 });
 
 ipcMain.handle('ext:remove', async (_e, extId) => {
   const ext = loadedExtensions.find(x => x.id === extId || x.dirName === extId);
   if (!ext) return false;
-  const sess = win.webContents.session;
-  if (ext.enabled && !ext.loadError) { try { await sess.removeExtension(ext.id); } catch {} }
-
-  // Restore browser files if this was a zip extension with overrides
-  let needsHtmlReload = false;
-  let needsCssReload = false;
-  if (hasActiveOverrides(ext.dirName)) {
-    const hadHtmlBackup = fs.existsSync(path.join(BACKUP_DIR, ext.dirName, 'index.html'));
-    removeOverrides(ext.dirName);
-    if (hadHtmlBackup) needsHtmlReload = true;
-    else needsCssReload = true;
-  }
+  const isBundled = fs.existsSync(path.join(BUNDLED_EXT_DIR, ext.dirName));
 
   if (ext.path && fs.existsSync(ext.path)) fs.rmSync(ext.path, { recursive: true, force: true });
-  delete store.extensions[ext.dirName];
-  saveStore();
-  loadedExtensions = loadedExtensions.filter(x => x !== ext);
-  if (win) win.webContents.send('ext:list', getExtensionsList());
-
-  if (needsHtmlReload && win) {
-    win.loadFile(path.join(__dirname, 'index.html'));
-  } else if (needsCssReload && win) {
-    win.webContents.send('reload-css');
+  if (isBundled) {
+    if (!store.extensions[ext.dirName]) store.extensions[ext.dirName] = {};
+    store.extensions[ext.dirName].enabled = false;
+    store.extensions[ext.dirName].removed = true;
+  } else {
+    delete store.extensions[ext.dirName];
   }
+  saveStore();
+  await refreshExtensionsAndUi();
   return true;
 });
 
 ipcMain.handle('ext:toggle', async (_e, extId) => {
   const ext = loadedExtensions.find(x => x.id === extId || x.dirName === extId);
   if (!ext) return false;
-  const sess = win.webContents.session;
-  let needsHtmlReload = false;
-  let needsCssReload = false;
-
-  if (ext.enabled) {
-    // Disable
-    if (!ext.loadError) { try { await sess.removeExtension(ext.id); } catch {} }
-    ext.enabled = false;
-
-    if (hasActiveOverrides(ext.dirName)) {
-      // Check what kind of overrides are active
-      const hadHtmlBackup = fs.existsSync(path.join(BACKUP_DIR, ext.dirName, 'index.html'));
-      removeOverrides(ext.dirName);
-      ext.hasOverrides = false;
-      if (hadHtmlBackup) needsHtmlReload = true;
-      else needsCssReload = true;
-    }
-  } else {
-    // Enable
-    try {
-      if (ext.isZip) {
-        const applied = applyZipOverrides(ext.path, ext.dirName);
-        ext.hasOverrides = true;
-        if (applied.includes('index.html')) needsHtmlReload = true;
-        else if (applied.includes('ext-theme.css')) needsCssReload = true;
-      }
-
-      const loaded = await sess.loadExtension(ext.path, { allowFileAccess: true });
-      ext.id = loaded.id;
-      ext.name = loaded.name;
-      ext.version = loaded.version;
-      ext.enabled = true;
-      ext.loadError = false;
-    } catch (e) {
-      console.warn('Failed to enable extension:', e.message);
-      ext.enabled = false;
-    }
-  }
-
-  saveExtensionState(ext.dirName, ext.enabled);
-  if (win) win.webContents.send('ext:list', getExtensionsList());
-
-  if (needsHtmlReload && win) {
-    // Full reload needed -- index.html itself changed
-    win.loadFile(path.join(__dirname, 'index.html'));
-  } else if (needsCssReload && win) {
-    // Just reload the CSS, no full page reload needed
-    win.webContents.send('reload-css');
-  }
-  return ext.enabled;
+  const nextEnabled = !ext.enabled;
+  saveExtensionState(ext.dirName, nextEnabled);
+  await refreshExtensionsAndUi();
+  return nextEnabled;
 });
 
 ipcMain.handle('ext:openPopup', async (_e, extId) => {

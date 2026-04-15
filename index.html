@@ -6,10 +6,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AG Browser</title>
   <link rel="stylesheet" href="./styles.css" />
-  <link rel="stylesheet" href="./ext-theme.css" />
 </head>
 <body data-theme="dark">
-  <div class="drag-region"></div>
+  <div class="window-frame">
+    <div class="window-frame__brand">
+      <span class="window-frame__dot"></span>
+      <span class="window-frame__title">AG Browser</span>
+    </div>
+    <div class="window-controls" aria-label="Window controls">
+      <button id="btnMinimizeWindow" class="window-control" type="button" aria-label="Minimize window">
+        <span class="window-control-icon icon-minimize"></span>
+      </button>
+      <button id="btnToggleMaximizeWindow" class="window-control" type="button" aria-label="Maximize window">
+        <span class="window-control-icon icon-maximize"></span>
+      </button>
+      <button id="btnCloseWindow" class="window-control window-control-close" type="button" aria-label="Close window">
+        <span class="window-control-icon icon-close"></span>
+      </button>
+    </div>
+  </div>
 
   <div class="top">
     <div class="tabs" id="tabs"></div>

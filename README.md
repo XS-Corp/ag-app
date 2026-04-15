@@ -1,14 +1,29 @@
-# XBrowser
+# AG Browser
 
 > **A blazing-fast, privacy-respecting, open-source web browser.**
 
-XBrowser is a lightweight, cross-platform web browser built on Electron. Designed to offer a seamless and distraction-free browsing experience, it puts performance and user privacy first — without compromising on extensibility or design.
+AG Browser is a lightweight, cross-platform web browser built on Electron. Designed to offer a seamless and distraction-free browsing experience, it puts performance and user privacy first — without compromising on extensibility or design.
+
+## Preview
+
+![AG Browser Screenshot](docs/preview.png)
+
+---
+
+## 💨 Quick start
+
+```bash
+git clone https://github.com/XS-Corp/ag-browser
+cd ag-browser
+npm install
+npm start
+```
 
 ---
 
 ## 🚀 Key Features
 
-- **No Tracking** – XBrowser does not collect telemetry, usage analytics, or personal data.
+- **No Tracking** – AG Browser does not collect telemetry, usage analytics, or personal data.
 - **Cross-Platform** – Runs on macOS, Windows, and Linux with identical functionality.
 - **Custom UI/UX** – Minimalist interface with theming support and optional translucency.
 - **Ad-Free by Design** – No ads, no sponsored content, and no hidden banners.
@@ -21,7 +36,7 @@ XBrowser is a lightweight, cross-platform web browser built on Electron. Designe
 ## 🔐 Philosophy
 
 - **Privacy-first**: No silent data collection. Ever.
-- **Speed-focused**: Startup times under a second, and minimal memory usage.
+- **Speed-focused**: Fast startup, and minimal memory usage.
 - **User-controlled**: Everything is tweakable. No locked settings.
 - **Open-source**: Built by developers, for developers.
 
@@ -29,13 +44,13 @@ XBrowser is a lightweight, cross-platform web browser built on Electron. Designe
 
 ## 🛠️ Project Status
 
-XBrowser is under active development. Current efforts are focused on:
+AG Browser is under active development. Current efforts are focused on:
 
-- Tab management with custom visuals
-- Native download handler
-- Theming engine
+✅ Tab management with custom visuals
+✅ Native download handler
+✅ Theming engine
 - AG AI integration (optional assistant)
-- Plugin system for extensions
+✅ Plugin system for extensions
 
 ---
 
@@ -55,10 +70,17 @@ Feel free to fork, contribute, or suggest improvements.
 
 ---
 
+## ⚠️ Warning
+
+AG Browser tested only on ARM64 macOS and can be unstable on other platforms.
+
+---
+
+
 ## 📄 License
 
 This project is licensed under the [MIT License](./LICENSE)
 
-> XBrowser — because your browser should work *for you*, not against you.
+> AG Browser — because your browser should work *for you*, not against you.
 
 © 2026 KickedStorm. All rights reserved.

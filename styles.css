@@ -69,19 +69,166 @@ html, body {
   transition: background 0.3s ease, color 0.3s ease;
 }
 
-/* ===== Drag Region ===== */
-.drag-region {
+/* ===== Window Frame ===== */
+.window-frame {
   position: fixed;
   top: 0; left: 0; right: 0;
-  height: 32px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px 0 14px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0)),
+    var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
   -webkit-app-region: drag;
   z-index: 10000;
+  backdrop-filter: blur(22px) saturate(180%);
+}
+
+.window-frame__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.window-frame__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent), #8b5cf6);
+  box-shadow: 0 0 14px var(--accent-glow);
+  flex-shrink: 0;
+}
+
+.window-frame__title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg-secondary);
+  white-space: nowrap;
+}
+
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.window-control {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--tab-hover), var(--tab-bg));
+  color: var(--fg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease, color 0.15s ease;
+}
+
+.window-control:hover {
+  background: var(--tab-hover);
+  border-color: var(--border-strong);
+}
+
+.window-control:active {
+  transform: scale(0.94);
+}
+
+.window-control.window-control-close:hover {
+  background: var(--error);
+  border-color: var(--error);
+  color: #fff;
+}
+
+.window-control-icon {
+  position: relative;
+  display: block;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+}
+
+.icon-minimize::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 2px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.icon-maximize::before,
+.icon-maximize::after,
+.icon-close::before,
+.icon-close::after {
+  content: '';
+  position: absolute;
+}
+
+.icon-maximize::before {
+  inset: 1px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+.window-control.is-maximized .icon-maximize::before {
+  inset: 3px 1px 1px 3px;
+}
+
+.window-control.is-maximized .icon-maximize::after {
+  inset: 1px 3px 3px 1px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+.icon-close::before,
+.icon-close::after {
+  top: 5px;
+  left: 0;
+  width: 12px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.icon-close::before { transform: rotate(45deg); }
+.icon-close::after { transform: rotate(-45deg); }
+
+.window-frame button {
+  -webkit-app-region: no-drag;
+}
+
+html[data-platform="darwin"] .window-frame {
+  padding-left: 92px;
+  padding-right: 16px;
+}
+
+html[data-platform="darwin"] .window-controls {
+  display: none;
+}
+
+html[data-platform="darwin"] .window-frame__brand {
+  max-width: calc(100% - 92px);
+}
+
+html[data-platform="darwin"] .window-frame__dot {
+  display: none;
 }
 
 /* ===== Top Bar ===== */
 .top {
   position: fixed;
-  top: 32px; left: 0; right: 0;
+  top: 36px; left: 0; right: 0;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
   z-index: 1000;
@@ -99,7 +246,7 @@ html, body {
   display: flex;
   gap: 4px;
   align-items: center;
-  padding: 4px 8px 4px 72px;
+  padding: 4px 10px;
   overflow-x: auto;
   scrollbar-width: none;
   border-bottom: 1px solid var(--border);
@@ -185,7 +332,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 10px 7px 10px;
+  padding: 5px 10px 7px;
 }
 
 .nav-buttons { display: flex; gap: 4px; flex-shrink: 0; }
@@ -259,7 +406,7 @@ html, body {
 .panel {
   position: fixed;
   right: 12px;
-  top: 120px;
+  top: 124px;
   width: 480px;
   max-height: 70vh;
   background: var(--panel-bg);
@@ -524,7 +671,7 @@ html, body {
 #btnSaveHomepage:hover { background: var(--accent-hover); }
 
 /* ===== Fullscreen (F11 / HTML fullscreen) ===== */
-body.browser-fullscreen .drag-region,
+body.browser-fullscreen .window-frame,
 body.browser-fullscreen .top {
   opacity: 0;
   pointer-events: none;
