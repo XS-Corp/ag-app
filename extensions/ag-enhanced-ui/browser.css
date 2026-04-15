@@ -145,9 +145,14 @@
 }
 
 /* --- Settings --- */
-.theme-btn.active, .lang-btn.active {
+.theme-btn.active {
   background: linear-gradient(135deg, var(--accent), #a855f7);
   border-color: transparent;
+}
+
+.setting-select:focus {
+  border-color: transparent;
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 #btnSaveHomepage {

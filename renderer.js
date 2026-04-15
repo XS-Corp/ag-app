@@ -1,105 +1,37 @@
 /* ===== i18n ===== */
-const i18n = {
-  ru: {
-    downloads: 'Загрузки',
-    extensions: 'Расширения',
-    settings: 'Настройки',
-    clearFinished: 'Очистить завершённые',
-    importJs: 'Импорт .js',
-    importZip: 'Импорт .zip',
-    reload: 'Перезагрузить',
-    zipBadge: 'ZIP',
-    uiOverride: 'Подменяет UI',
-    theme: 'Тема',
-    language: 'Язык',
-    homepage: 'Главная страница',
-    save: 'Сохранить',
-    dark: 'Тёмная',
-    light: 'Светлая',
-    russian: 'Русский',
-    english: 'English',
-    noDownloads: 'Нет загрузок',
-    noExtensions: 'Нет расширений',
-    addressPlaceholder: 'Введите URL или поисковый запрос',
-    progressing: 'Загружается',
-    completed: 'Завершено',
-    cancelled: 'Отменено',
-    interrupted: 'Прервано',
-    showInFolder: 'Показать в папке',
-    pinTab: 'Закрепить вкладку',
-    unpinTab: 'Открепить вкладку',
-    closeTab: 'Закрыть вкладку',
-    closeOthers: 'Закрыть другие',
-    closeRight: 'Закрыть справа',
-    disable: 'Отключить',
-    enable: 'Включить',
-    remove: 'Удалить',
-    openUi: 'Интерфейс',
-    saved: 'Сохранено!',
-    back: 'Назад',
-    forward: 'Вперёд',
-    reloadPage: 'Перезагрузить',
-    newTab: 'Новая вкладка',
-    minimizeWindow: 'Свернуть окно',
-    maximizeWindow: 'Развернуть окно',
-    restoreWindow: 'Восстановить окно',
-    closeWindow: 'Закрыть окно'
-  },
-  en: {
-    downloads: 'Downloads',
-    extensions: 'Extensions',
-    settings: 'Settings',
-    clearFinished: 'Clear finished',
-    importJs: 'Import .js',
-    importZip: 'Import .zip',
-    reload: 'Reload',
-    zipBadge: 'ZIP',
-    uiOverride: 'Overrides UI',
-    theme: 'Theme',
-    language: 'Language',
-    homepage: 'Homepage',
-    save: 'Save',
-    dark: 'Dark',
-    light: 'Light',
-    russian: 'Russian',
-    english: 'English',
-    noDownloads: 'No downloads',
-    noExtensions: 'No extensions',
-    addressPlaceholder: 'Enter URL or search query',
-    progressing: 'Downloading',
-    completed: 'Completed',
-    cancelled: 'Cancelled',
-    interrupted: 'Interrupted',
-    showInFolder: 'Show in folder',
-    pinTab: 'Pin tab',
-    unpinTab: 'Unpin tab',
-    closeTab: 'Close tab',
-    closeOthers: 'Close others',
-    closeRight: 'Close tabs to right',
-    disable: 'Disable',
-    enable: 'Enable',
-    remove: 'Remove',
-    openUi: 'Open UI',
-    saved: 'Saved!',
-    back: 'Back',
-    forward: 'Forward',
-    reloadPage: 'Reload',
-    newTab: 'New tab',
-    minimizeWindow: 'Minimize window',
-    maximizeWindow: 'Maximize window',
-    restoreWindow: 'Restore window',
-    closeWindow: 'Close window'
-  }
-};
+const {
+  DEFAULT_LANG,
+  LANGUAGES,
+  getLangConfig,
+  getUiStrings,
+  normalizeLang
+} = window.AG_I18N;
 
-let currentLang = 'ru';
-function t(key) { return (i18n[currentLang] || i18n.ru)[key] || key; }
+let currentLang = DEFAULT_LANG;
+
+function t(key) {
+  return getUiStrings(currentLang)[key] || key;
+}
+
+function populateLanguageSelect() {
+  selectLanguage.innerHTML = '';
+  LANGUAGES.forEach((lang) => {
+    const option = document.createElement('option');
+    option.value = lang.code;
+    option.textContent = lang.label;
+    selectLanguage.appendChild(option);
+  });
+}
 
 function applyI18n() {
+  const langConfig = getLangConfig(currentLang);
+  document.documentElement.lang = langConfig.htmlLang;
+  document.body.classList.toggle('is-rtl', !!langConfig.rtl);
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.getAttribute('data-i18n');
     el.textContent = t(key);
   });
+  windowControlsEl?.setAttribute('aria-label', t('windowControls'));
   btnMinimizeWindow.title = t('minimizeWindow');
   btnMinimizeWindow.setAttribute('aria-label', t('minimizeWindow'));
   btnCloseWindow.title = t('closeWindow');
@@ -116,12 +48,13 @@ function applyI18n() {
   // Theme buttons
   btnThemeDark.textContent = t('dark');
   btnThemeLight.textContent = t('light');
-  btnLangRu.textContent = t('russian');
-  btnLangEn.textContent = t('english');
+  selectLanguage.setAttribute('aria-label', t('language'));
+  selectLanguage.value = currentLang;
   applyWindowState(windowState);
 }
 
 /* ===== DOM refs ===== */
+const windowControlsEl = document.querySelector('.window-controls');
 const btnMinimizeWindow = document.getElementById('btnMinimizeWindow');
 const btnToggleMaximizeWindow = document.getElementById('btnToggleMaximizeWindow');
 const btnCloseWindow = document.getElementById('btnCloseWindow');
@@ -149,10 +82,11 @@ const panelSettings = document.getElementById('panelSettings');
 const btnCloseSettings = document.getElementById('btnCloseSettings');
 const btnThemeDark = document.getElementById('btnThemeDark');
 const btnThemeLight = document.getElementById('btnThemeLight');
-const btnLangRu = document.getElementById('btnLangRu');
-const btnLangEn = document.getElementById('btnLangEn');
+const selectLanguage = document.getElementById('selectLanguage');
 const inputHomepage = document.getElementById('inputHomepage');
 const btnSaveHomepage = document.getElementById('btnSaveHomepage');
+
+populateLanguageSelect();
 
 /* ===== State ===== */
 let tabs = [];
@@ -196,6 +130,16 @@ function getStateText(state) {
   return t(map[state] || state);
 }
 
+function getTabDisplayTitle(tab) {
+  const title = (tab?.title || '').trim();
+  if (title && title !== 'New Tab') return title;
+
+  const url = (tab?.url || '').trim();
+  if (url && url !== 'about:blank') return url;
+
+  return t('newTab');
+}
+
 function ensureRuntimeThemeLink(cacheBust = false) {
   if (!extThemeHref) return;
 
@@ -228,9 +172,8 @@ function applyTheme(theme) {
 }
 
 function applyLang(lang) {
-  currentLang = lang;
-  btnLangRu.classList.toggle('active', lang === 'ru');
-  btnLangEn.classList.toggle('active', lang === 'en');
+  currentLang = normalizeLang(lang);
+  selectLanguage.value = currentLang;
   applyI18n();
   // Re-render panels that may be open
   renderDownloads();
@@ -246,13 +189,10 @@ btnThemeLight.onclick = async () => {
   settings = await window.ag.settingsSet({ theme: 'light' });
   applyTheme('light');
 };
-btnLangRu.onclick = async () => {
-  settings = await window.ag.settingsSet({ lang: 'ru' });
-  applyLang('ru');
-};
-btnLangEn.onclick = async () => {
-  settings = await window.ag.settingsSet({ lang: 'en' });
-  applyLang('en');
+selectLanguage.onchange = async () => {
+  const lang = normalizeLang(selectLanguage.value);
+  settings = await window.ag.settingsSet({ lang });
+  applyLang(lang);
 };
 btnSaveHomepage.onclick = async () => {
   const url = inputHomepage.value.trim();
@@ -275,7 +215,8 @@ function renderTabs() {
   sorted.forEach(tab => {
     const el = document.createElement('div');
     el.className = 'tab' + (tab.id === activeId ? ' active' : '') + (tab.pinned ? ' pinned' : '');
-    el.title = tab.title || tab.url;
+    const tabTitle = getTabDisplayTitle(tab);
+    el.title = tabTitle;
     el.setAttribute('data-tab-id', tab.id);
 
     if (tab.loading) {
@@ -292,7 +233,7 @@ function renderTabs() {
 
     const title = document.createElement('div');
     title.className = 'title';
-    title.textContent = tab.title || tab.url || 'New Tab';
+    title.textContent = tabTitle;
     el.appendChild(title);
 
     if (tab.pinned) {
@@ -427,7 +368,7 @@ btnSettings.onclick = async () => {
   if (activePanel === panelSettings) { hideAllPanels(); return; }
   settings = await window.ag.settingsGet();
   applyTheme(settings.theme);
-  applyLang(settings.lang);
+  applyLang(settings.lang || DEFAULT_LANG);
   inputHomepage.value = settings.homepage || '';
   showPanel(panelSettings);
 };
@@ -554,8 +495,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'F11') { e.preventDe
 
   settings = await window.ag.settingsGet();
   applyTheme(settings.theme || 'dark');
-  currentLang = settings.lang || 'ru';
-  applyI18n();
+  applyLang(settings.lang || DEFAULT_LANG);
 
   exts = await window.ag.extList();
   renderExtensions();

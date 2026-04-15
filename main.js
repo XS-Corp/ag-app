@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 const AdmZip = require('adm-zip');
+const { DEFAULT_LANG, getMenuStrings, getUiStrings, normalizeLang } = require('./i18n');
 
 const APP_ROOT = __dirname;
 const DEFAULT_HOMEPAGE = 'https://search.kickedstorm.com/';
@@ -136,7 +137,7 @@ function loadStore() {
   // defaults
   if (!store.settings) store.settings = {};
   if (!store.settings.theme) store.settings.theme = 'dark';
-  if (!store.settings.lang) store.settings.lang = 'ru';
+  store.settings.lang = normalizeLang(store.settings.lang || DEFAULT_LANG);
   if (!store.settings.homepage) store.settings.homepage = DEFAULT_HOMEPAGE;
   if (!store.extensions) store.extensions = {};
   if (!store.pinnedTabs) store.pinnedTabs = [];
@@ -271,6 +272,8 @@ async function createWindow() {
 /* ---------- Keyboard Shortcuts (App Menu) ---------- */
 function buildAppMenu() {
   const isMac = process.platform === 'darwin';
+  const menuStrings = getMenuStrings(store.settings?.lang);
+  const uiStrings = getUiStrings(store.settings?.lang);
 
   function switchToTabByIndex(index) {
     if (index < 0) return;
@@ -332,86 +335,86 @@ function buildAppMenu() {
     ...(isMac ? [{
       label: 'AG Browser',
       submenu: [
-        { role: 'about' },
+        { label: menuStrings.aboutApp, role: 'about' },
         { type: 'separator' },
-        { role: 'hide' },
-        { role: 'hideOthers' },
-        { role: 'unhide' },
+        { label: menuStrings.hideApp, role: 'hide' },
+        { label: menuStrings.hideOthers, role: 'hideOthers' },
+        { label: menuStrings.showAll, role: 'unhide' },
         { type: 'separator' },
-        { role: 'quit' }
+        { label: menuStrings.quit, role: 'quit' }
       ]
     }] : []),
     {
-      label: 'File',
+      label: menuStrings.fileMenu,
       submenu: [
-        { label: 'New Tab', accelerator: 'CmdOrCtrl+T', click: () => { const tab = createTab(getHomepage()); setActiveTab(tab.id); } },
-        { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => { if (activeTabId != null) closeTab(activeTabId); } },
-        { label: 'Reopen Closed Tab', accelerator: 'CmdOrCtrl+Shift+T', click: reopenClosedTab },
+        { label: uiStrings.newTab, accelerator: 'CmdOrCtrl+T', click: () => { const tab = createTab(getHomepage()); setActiveTab(tab.id); } },
+        { label: uiStrings.closeTab, accelerator: 'CmdOrCtrl+W', click: () => { if (activeTabId != null) closeTab(activeTabId); } },
+        { label: menuStrings.reopenClosedTab, accelerator: 'CmdOrCtrl+Shift+T', click: reopenClosedTab },
         { type: 'separator' },
-        ...(isMac ? [] : [{ label: 'Quit', accelerator: 'Alt+F4', role: 'quit' }])
+        ...(isMac ? [] : [{ label: menuStrings.quit, accelerator: 'Alt+F4', role: 'quit' }])
       ]
     },
     {
-      label: 'Edit',
+      label: menuStrings.editMenu,
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
+        { label: menuStrings.undo, role: 'undo' },
+        { label: menuStrings.redo, role: 'redo' },
         { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' }
+        { label: menuStrings.cut, role: 'cut' },
+        { label: menuStrings.copy, role: 'copy' },
+        { label: menuStrings.paste, role: 'paste' },
+        { label: menuStrings.selectAll, role: 'selectAll' }
       ]
     },
     {
-      label: 'View',
+      label: menuStrings.viewMenu,
       submenu: [
-        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => { const t = getActiveTab(); if (t) t.view.webContents.reload(); } },
-        { label: 'Hard Reload', accelerator: 'CmdOrCtrl+Shift+R', click: hardReload },
-        { label: 'Reload', accelerator: 'F5', visible: false, click: () => { const t = getActiveTab(); if (t) t.view.webContents.reload(); } },
+        { label: uiStrings.reloadPage, accelerator: 'CmdOrCtrl+R', click: () => { const t = getActiveTab(); if (t) t.view.webContents.reload(); } },
+        { label: menuStrings.hardReload, accelerator: 'CmdOrCtrl+Shift+R', click: hardReload },
+        { label: uiStrings.reloadPage, accelerator: 'F5', visible: false, click: () => { const t = getActiveTab(); if (t) t.view.webContents.reload(); } },
         { type: 'separator' },
-        { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', click: () => zoomActive(0.5) },
-        { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', visible: false, click: () => zoomActive(0.5) },
-        { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => zoomActive(-0.5) },
-        { label: 'Reset Zoom', accelerator: 'CmdOrCtrl+0', click: resetZoom },
+        { label: menuStrings.zoomIn, accelerator: 'CmdOrCtrl+Plus', click: () => zoomActive(0.5) },
+        { label: menuStrings.zoomIn, accelerator: 'CmdOrCtrl+=', visible: false, click: () => zoomActive(0.5) },
+        { label: menuStrings.zoomOut, accelerator: 'CmdOrCtrl+-', click: () => zoomActive(-0.5) },
+        { label: menuStrings.resetZoom, accelerator: 'CmdOrCtrl+0', click: resetZoom },
         { type: 'separator' },
-        { label: 'Developer Tools', accelerator: isMac ? 'Cmd+Alt+I' : 'Ctrl+Shift+I', click: openDevTools },
-        { label: 'Developer Tools', accelerator: 'F12', visible: false, click: openDevTools }
+        { label: menuStrings.developerTools, accelerator: isMac ? 'Cmd+Alt+I' : 'Ctrl+Shift+I', click: openDevTools },
+        { label: menuStrings.developerTools, accelerator: 'F12', visible: false, click: openDevTools }
       ]
     },
     {
-      label: 'Navigate',
+      label: menuStrings.navigateMenu,
       submenu: [
-        { label: 'Back', accelerator: isMac ? 'Cmd+[' : 'Alt+Left', click: () => { const t = getActiveTab(); if (t?.view.webContents.canGoBack()) t.view.webContents.goBack(); } },
-        { label: 'Forward', accelerator: isMac ? 'Cmd+]' : 'Alt+Right', click: () => { const t = getActiveTab(); if (t?.view.webContents.canGoForward()) t.view.webContents.goForward(); } },
+        { label: uiStrings.back, accelerator: isMac ? 'Cmd+[' : 'Alt+Left', click: () => { const t = getActiveTab(); if (t?.view.webContents.canGoBack()) t.view.webContents.goBack(); } },
+        { label: uiStrings.forward, accelerator: isMac ? 'Cmd+]' : 'Alt+Right', click: () => { const t = getActiveTab(); if (t?.view.webContents.canGoForward()) t.view.webContents.goForward(); } },
         { type: 'separator' },
-        { label: 'Focus Address Bar', accelerator: 'CmdOrCtrl+L', click: focusAddress },
-        { label: 'Focus Address Bar', accelerator: 'Alt+D', visible: false, click: focusAddress },
-        { label: 'Focus Address Bar', accelerator: 'F6', visible: false, click: focusAddress }
+        { label: menuStrings.focusAddressBar, accelerator: 'CmdOrCtrl+L', click: focusAddress },
+        { label: menuStrings.focusAddressBar, accelerator: 'Alt+D', visible: false, click: focusAddress },
+        { label: menuStrings.focusAddressBar, accelerator: 'F6', visible: false, click: focusAddress }
       ]
     },
     {
-      label: 'Tabs',
+      label: menuStrings.tabsMenu,
       submenu: [
-        { label: 'Next Tab', accelerator: isMac ? 'Cmd+Shift+]' : 'Ctrl+Tab', click: nextTab },
-        { label: 'Previous Tab', accelerator: isMac ? 'Cmd+Shift+[' : 'Ctrl+Shift+Tab', click: prevTab },
-        { label: 'Next Tab', accelerator: 'Ctrl+PageDown', visible: false, click: nextTab },
-        { label: 'Previous Tab', accelerator: 'Ctrl+PageUp', visible: false, click: prevTab },
+        { label: menuStrings.nextTab, accelerator: isMac ? 'Cmd+Shift+]' : 'Ctrl+Tab', click: nextTab },
+        { label: menuStrings.previousTab, accelerator: isMac ? 'Cmd+Shift+[' : 'Ctrl+Shift+Tab', click: prevTab },
+        { label: menuStrings.nextTab, accelerator: 'Ctrl+PageDown', visible: false, click: nextTab },
+        { label: menuStrings.previousTab, accelerator: 'Ctrl+PageUp', visible: false, click: prevTab },
         { type: 'separator' },
         ...[1,2,3,4,5,6,7,8].map(n => ({
-          label: `Tab ${n}`, accelerator: `CmdOrCtrl+${n}`, visible: false, click: () => switchToTabByIndex(n - 1)
+          label: `${menuStrings.tabLabel} ${n}`, accelerator: `CmdOrCtrl+${n}`, visible: false, click: () => switchToTabByIndex(n - 1)
         })),
-        { label: 'Last Tab', accelerator: 'CmdOrCtrl+9', visible: false, click: () => switchToTabByIndex(8) }
+        { label: menuStrings.lastTab, accelerator: 'CmdOrCtrl+9', visible: false, click: () => switchToTabByIndex(8) }
       ]
     },
     ...(isMac ? [{
-      label: 'Window',
+      label: menuStrings.windowMenu,
       submenu: [
-        { role: 'minimize' },
-        { role: 'zoom' },
-        { role: 'togglefullscreen' },
+        { label: uiStrings.minimizeWindow, role: 'minimize' },
+        { label: menuStrings.zoomWindow, role: 'zoom' },
+        { label: menuStrings.toggleFullScreen, role: 'togglefullscreen' },
         { type: 'separator' },
-        { role: 'front' }
+        { label: menuStrings.bringAllToFront, role: 'front' }
       ]
     }] : [])
   ];
@@ -1011,9 +1014,13 @@ ipcMain.handle('ext:openPopup', async (_e, extId) => {
 
 // Settings
 ipcMain.handle('settings:get', () => store.settings);
-ipcMain.handle('settings:set', (_e, newSettings) => {
+ipcMain.handle('settings:set', (_e, newSettings = {}) => {
+  if (Object.prototype.hasOwnProperty.call(newSettings, 'lang')) {
+    newSettings.lang = normalizeLang(newSettings.lang);
+  }
   Object.assign(store.settings, newSettings);
   saveStore();
+  buildAppMenu();
   return store.settings;
 });
 
