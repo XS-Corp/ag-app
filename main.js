@@ -1,13 +1,19 @@
 const { app, BrowserWindow, BrowserView, ipcMain, shell, dialog, globalShortcut, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { pathToFileURL } = require('url');
+const { fileURLToPath, pathToFileURL } = require('url');
 const AdmZip = require('adm-zip');
 const { DEFAULT_LANG, getMenuStrings, getUiStrings, normalizeLang } = require('./i18n');
 
 const APP_ROOT = __dirname;
 const DEFAULT_HOMEPAGE = 'https://search.kickedstorm.com/';
 const EMPTY_EXT_THEME = '/* no extension theme active */\n';
+const SEARCH_FALLBACK_PREFIX = 'https://www.google.com/search?q=';
+const SAFE_BROWSER_PROTOCOLS = new Set(['http:', 'https:']);
+const SAFE_VIEW_EXTERNAL_PROTOCOLS = new Set(['mailto:', 'tel:']);
+const SAFE_UI_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:']);
+const HOSTLIKE_INPUT_RE = /^(localhost|\d{1,3}(?:\.\d{1,3}){3}|(?:[a-z0-9-]+\.)+[a-z]{2,})(?::\d+)?(?:[/?#].*)?$/i;
+const LOCAL_HOST_INPUT_RE = /^(localhost|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:[/?#].*)?$/i;
 
 let win;
 let tabs = [];
@@ -49,6 +55,176 @@ function getCurrentIndexHtml() {
 
 function getRuntimeThemeHref() {
   return pathToFileURL(getRuntimeThemeFile()).toString();
+}
+
+function safeParseUrl(rawUrl) {
+  try {
+    return new URL(String(rawUrl || '').trim());
+  } catch {
+    return null;
+  }
+}
+
+function normalizeRawUrlInput(rawUrl) {
+  const input = String(rawUrl || '').trim();
+  if (!input) return '';
+  if (HOSTLIKE_INPUT_RE.test(input)) {
+    const scheme = LOCAL_HOST_INPUT_RE.test(input) ? 'http' : 'https';
+    return `${scheme}://${input}`;
+  }
+  if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(input)) {
+    return input;
+  }
+  if (input.includes('.') && !/\s/.test(input)) {
+    return `https://${input}`;
+  }
+  return '';
+}
+
+function resolveBrowserUrl(rawUrl, { fallbackUrl = DEFAULT_HOMEPAGE, allowSearchFallback = true } = {}) {
+  const fallbackParsed = safeParseUrl(fallbackUrl);
+  const safeFallback = fallbackParsed && SAFE_BROWSER_PROTOCOLS.has(fallbackParsed.protocol)
+    ? fallbackParsed.toString()
+    : DEFAULT_HOMEPAGE;
+
+  const input = String(rawUrl || '').trim();
+  const normalized = normalizeRawUrlInput(input);
+  if (normalized) {
+    const parsed = safeParseUrl(normalized);
+    if (parsed && SAFE_BROWSER_PROTOCOLS.has(parsed.protocol)) {
+      return parsed.toString();
+    }
+    return safeFallback;
+  }
+
+  if (!input) return safeFallback;
+  if (!allowSearchFallback) return safeFallback;
+  return `${SEARCH_FALLBACK_PREFIX}${encodeURIComponent(input)}`;
+}
+
+function isSafeBrowserUrl(rawUrl) {
+  const parsed = safeParseUrl(rawUrl);
+  return !!parsed && SAFE_BROWSER_PROTOCOLS.has(parsed.protocol);
+}
+
+function isPathInside(candidatePath, rootPath) {
+  const relative = path.relative(rootPath, candidatePath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function isAllowedUiFileUrl(rawUrl) {
+  const parsed = safeParseUrl(rawUrl);
+  if (!parsed || parsed.protocol !== 'file:') return false;
+
+  try {
+    const targetPath = fs.realpathSync(fileURLToPath(parsed));
+    const allowedRoots = [APP_ROOT, getRuntimeExtensionsDir()]
+      .filter(fs.existsSync)
+      .map(root => fs.realpathSync(root));
+    return allowedRoots.some(root => isPathInside(targetPath, root));
+  } catch {
+    return false;
+  }
+}
+
+function isSecureOrigin(origin) {
+  const parsed = safeParseUrl(origin);
+  return !!parsed && parsed.protocol === 'https:';
+}
+
+function isExtensionOrigin(origin) {
+  const parsed = safeParseUrl(origin);
+  if (!parsed) return false;
+  if (parsed.protocol === 'chrome-extension:') return true;
+  if (parsed.protocol !== 'file:') return false;
+
+  try {
+    const targetPath = fs.realpathSync(fileURLToPath(parsed));
+    const runtimeExtDir = getRuntimeExtensionsDir();
+    if (!fs.existsSync(runtimeExtDir)) return false;
+    return isPathInside(targetPath, fs.realpathSync(runtimeExtDir));
+  } catch {
+    return false;
+  }
+}
+
+function openExternalUrl(rawUrl, allowedProtocols) {
+  const parsed = safeParseUrl(rawUrl);
+  if (!parsed || !allowedProtocols.has(parsed.protocol)) return false;
+  void shell.openExternal(parsed.toString());
+  return true;
+}
+
+function shouldAllowPermission(permission, details = {}) {
+  if (isExtensionOrigin(details.requestingOrigin)) {
+    return true;
+  }
+
+  switch (permission) {
+    case 'fullscreen':
+    case 'clipboard-sanitized-write':
+      return true;
+    case 'pointerLock':
+      return isSecureOrigin(details.requestingOrigin);
+    default:
+      return false;
+  }
+}
+
+function configureSessionSecurity(sess) {
+  sess.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+    callback(shouldAllowPermission(permission, details));
+  });
+
+  if (typeof sess.setPermissionCheckHandler === 'function') {
+    sess.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details = {}) => {
+      return shouldAllowPermission(permission, { ...details, requestingOrigin });
+    });
+  }
+}
+
+function loadSafeUrl(webContents, rawUrl, options) {
+  const targetUrl = resolveBrowserUrl(rawUrl, options);
+  return webContents.loadURL(targetUrl).catch((error) => {
+    console.warn(`Failed to load ${targetUrl}: ${error.message}`);
+    return false;
+  });
+}
+
+function sameTabState(a, b) {
+  return !!a && !!b &&
+    a.id === b.id &&
+    a.url === b.url &&
+    a.title === b.title &&
+    a.canGoBack === b.canGoBack &&
+    a.canGoForward === b.canGoForward &&
+    a.pinned === b.pinned &&
+    a.favicon === b.favicon &&
+    a.loading === b.loading;
+}
+
+function emitTabUpdate(tab) {
+  if (!win || !tab) return;
+  const serialized = serializeTab(tab);
+  if (sameTabState(serialized, tab.lastBroadcastState)) return;
+  tab.lastBroadcastState = serialized;
+  win.webContents.send('tab:updated', serialized);
+}
+
+function queueTabUpdate(tab) {
+  if (!tab || tab.updateTimer) return;
+  tab.updateTimer = setTimeout(() => {
+    tab.updateTimer = null;
+    if (!tabs.some(current => current.id === tab.id)) return;
+    emitTabUpdate(tab);
+  }, 16);
+}
+
+function clearQueuedTabUpdate(tab) {
+  if (tab?.updateTimer) {
+    clearTimeout(tab.updateTimer);
+    tab.updateTimer = null;
+  }
 }
 
 function ensureRuntimeFiles() {
@@ -157,13 +333,15 @@ function savePinnedTabs() {
 }
 
 function getHomepage() {
-  return store.settings.homepage || DEFAULT_HOMEPAGE;
+  return resolveBrowserUrl(store.settings.homepage || DEFAULT_HOMEPAGE, {
+    fallbackUrl: DEFAULT_HOMEPAGE,
+    allowSearchFallback: false
+  });
 }
 
 /* ---------- WebAssembly & Performance ---------- */
 app.commandLine.appendSwitch('enable-features', 'WebAssembly,WebAssemblyStreaming,SharedArrayBuffer');
 app.commandLine.appendSwitch('enable-webassembly');
-app.commandLine.appendSwitch('js-flags', '--wasm-staging');
 
 /* ---------- Window ---------- */
 async function createWindow() {
@@ -217,8 +395,22 @@ async function createWindow() {
   const chromeVersion = process.versions.chrome || '131.0.0.0';
   const customUA = `AG Browser/8.0 Chrome/${chromeVersion} ${defaultUA.replace(/Electron\/\S+\s*/g, '')}`;
   sess.setUserAgent(customUA);
+  configureSessionSecurity(sess);
 
   wireDownloads(sess);
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isAllowedUiFileUrl(url)) {
+      return { action: 'allow' };
+    }
+    openExternalUrl(url, SAFE_UI_EXTERNAL_PROTOCOLS);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (event, url) => {
+    if (isAllowedUiFileUrl(url)) return;
+    event.preventDefault();
+    openExternalUrl(url, SAFE_UI_EXTERNAL_PROTOCOLS);
+  });
 
   // Load extensions BEFORE creating any tabs so content scripts are ready
   try {
@@ -466,6 +658,7 @@ function showActiveView() {
 
 /* ---------- Tabs ---------- */
 function createTab(url, pinned = false) {
+  const initialUrl = resolveBrowserUrl(url, { fallbackUrl: getHomepage() });
   const view = new BrowserView({
     webPreferences: {
       session: win.webContents.session,  // share session so extensions work
@@ -477,18 +670,21 @@ function createTab(url, pinned = false) {
   });
 
   view.webContents.setWindowOpenHandler(({ url }) => {
-    if (!/^https?:/i.test(url)) {
-      shell.openExternal(url);
+    if (!isSafeBrowserUrl(url)) {
+      openExternalUrl(url, SAFE_VIEW_EXTERNAL_PROTOCOLS);
       return { action: 'deny' };
     }
-    view.webContents.loadURL(url);
+    void loadSafeUrl(view.webContents, url, {
+      fallbackUrl: getHomepage(),
+      allowSearchFallback: false
+    });
     return { action: 'deny' };
   });
 
   view.webContents.on('will-navigate', (e, url) => {
-    if (!/^https?:/i.test(url)) {
+    if (!isSafeBrowserUrl(url)) {
       e.preventDefault();
-      shell.openExternal(url);
+      openExternalUrl(url, SAFE_VIEW_EXTERNAL_PROTOCOLS);
     }
   });
 
@@ -525,7 +721,7 @@ function createTab(url, pinned = false) {
 
   const id = nextId++;
   const tab = {
-    id, view, url,
+    id, view, url: initialUrl,
     title: 'Loading...',
     canGoBack: false,
     canGoForward: false,
@@ -543,16 +739,16 @@ function createTab(url, pinned = false) {
     try {
       tab.favicon = view.webContents.getURL().split('/').slice(0, 3).join('/') + '/favicon.ico';
     } catch { tab.favicon = null; }
-    if (win) win.webContents.send('tab:updated', serializeTab(tab));
+    queueTabUpdate(tab);
   };
 
   view.webContents.on('did-start-loading', () => {
     tab.loading = true;
-    if (win) win.webContents.send('tab:updated', serializeTab(tab));
+    queueTabUpdate(tab);
   });
   view.webContents.on('did-stop-loading', () => {
     tab.loading = false;
-    if (win) win.webContents.send('tab:updated', serializeTab(tab));
+    queueTabUpdate(tab);
   });
 
   view.webContents.on('page-title-updated', updateState);
@@ -562,11 +758,11 @@ function createTab(url, pinned = false) {
   view.webContents.on('page-favicon-updated', (event, favicons) => {
     if (favicons?.length > 0) {
       tab.favicon = favicons[0];
-      if (win) win.webContents.send('tab:updated', serializeTab(tab));
+      queueTabUpdate(tab);
     }
   });
 
-  view.webContents.loadURL(url);
+  void loadSafeUrl(view.webContents, initialUrl, { fallbackUrl: getHomepage() });
   return tab;
 }
 
@@ -582,6 +778,7 @@ function closeTab(id) {
     if (closedTabsStack.length > 20) closedTabsStack.shift();
   }
 
+  clearQueuedTabUpdate(tab);
   detachView(tab);
   try { tab.view.webContents.destroy(); } catch { /* no-op */ }
   tabs.splice(idx, 1);
@@ -613,7 +810,7 @@ function togglePinTab(id) {
   if (tab) {
     tab.pinned = !tab.pinned;
     if (win) {
-      win.webContents.send('tab:updated', serializeTab(tab));
+      emitTabUpdate(tab);
       broadcastTabs();
     }
     savePinnedTabs();
@@ -809,7 +1006,7 @@ ipcMain.handle('tabs:togglePin', (_e, id) => togglePinTab(id));
 ipcMain.handle('nav:go', (_e, url) => {
   const t = getActiveTab();
   if (!t) return false;
-  t.view.webContents.loadURL(url);
+  void loadSafeUrl(t.view.webContents, url, { fallbackUrl: getHomepage() });
   return true;
 });
 ipcMain.handle('nav:back', () => { const t = getActiveTab(); if (t?.view.webContents.canGoBack()) t.view.webContents.goBack(); });
@@ -1017,6 +1214,12 @@ ipcMain.handle('settings:get', () => store.settings);
 ipcMain.handle('settings:set', (_e, newSettings = {}) => {
   if (Object.prototype.hasOwnProperty.call(newSettings, 'lang')) {
     newSettings.lang = normalizeLang(newSettings.lang);
+  }
+  if (Object.prototype.hasOwnProperty.call(newSettings, 'homepage')) {
+    newSettings.homepage = resolveBrowserUrl(newSettings.homepage, {
+      fallbackUrl: DEFAULT_HOMEPAGE,
+      allowSearchFallback: false
+    });
   }
   Object.assign(store.settings, newSettings);
   saveStore();

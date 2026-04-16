@@ -99,14 +99,21 @@ let contextMenu = null;
 let settings = {};
 let extThemeHref = '';
 let windowState = { isMaximized: false };
+const scheduledUiTasks = new Map();
 
 /* ===== Helpers ===== */
 function isHttp(url) { return /^https?:\/\//i.test(url); }
+const HOSTLIKE_INPUT_RE = /^(localhost|\d{1,3}(?:\.\d{1,3}){3}|(?:[a-z0-9-]+\.)+[a-z]{2,})(?::\d+)?(?:[/?#].*)?$/i;
+const LOCAL_HOST_INPUT_RE = /^(localhost|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:[/?#].*)?$/i;
 
 function normalizeUrl(u) {
   if (!u) return '';
   u = u.trim();
   if (isHttp(u)) return u;
+  if (HOSTLIKE_INPUT_RE.test(u)) {
+    const scheme = LOCAL_HOST_INPUT_RE.test(u) ? 'http' : 'https';
+    return `${scheme}://${u}`;
+  }
   if (u.includes('.') && !u.includes(' ')) return `https://${u}`;
   return `https://www.google.com/search?q=${encodeURIComponent(u)}`;
 }
@@ -164,6 +171,33 @@ function applyWindowState(nextState = {}) {
   btnToggleMaximizeWindow.setAttribute('aria-label', label);
 }
 
+function scheduleUiTask(key, fn) {
+  if (scheduledUiTasks.has(key)) return;
+  const handle = window.requestAnimationFrame(() => {
+    scheduledUiTasks.delete(key);
+    fn();
+  });
+  scheduledUiTasks.set(key, handle);
+}
+
+function scheduleTabsRender() {
+  scheduleUiTask('tabs', renderTabs);
+}
+
+function scheduleToolbarUpdate() {
+  scheduleUiTask('toolbar', updateToolbarState);
+}
+
+function scheduleDownloadsRender() {
+  if (activePanel !== panelDownloads) return;
+  scheduleUiTask('downloads', renderDownloads);
+}
+
+function scheduleExtensionsRender() {
+  if (activePanel !== panelExtensions) return;
+  scheduleUiTask('extensions', renderExtensions);
+}
+
 /* ===== Theme / Settings ===== */
 function applyTheme(theme) {
   document.body.setAttribute('data-theme', theme);
@@ -198,6 +232,7 @@ btnSaveHomepage.onclick = async () => {
   const url = inputHomepage.value.trim();
   if (url) {
     settings = await window.ag.settingsSet({ homepage: url });
+    inputHomepage.value = settings.homepage || '';
     btnSaveHomepage.textContent = t('saved');
     setTimeout(() => { btnSaveHomepage.textContent = t('save'); }, 1500);
   }
@@ -293,7 +328,9 @@ function updateToolbarState() {
   const tab = tabs.find(x => x.id === activeId);
   btnBack.disabled = !(tab && tab.canGoBack);
   btnFwd.disabled = !(tab && tab.canGoForward);
-  address.value = tab ? tab.url : '';
+  if (document.activeElement !== address) {
+    address.value = tab ? tab.url : '';
+  }
 }
 
 btnBack.onclick = () => window.ag.back();
@@ -454,18 +491,48 @@ function renderExtensions() {
 }
 
 /* ===== IPC Events ===== */
-window.ag.onTabsList((list, active) => { tabs = list; activeId = active; renderTabs(); updateToolbarState(); });
-window.ag.onActiveChanged((id) => { activeId = id; renderTabs(); updateToolbarState(); });
+window.ag.onTabsList((list, active) => {
+  tabs = list;
+  activeId = active;
+  scheduleTabsRender();
+  scheduleToolbarUpdate();
+});
+window.ag.onActiveChanged((id) => {
+  activeId = id;
+  scheduleTabsRender();
+  scheduleToolbarUpdate();
+});
 window.ag.onTabUpdated((tab) => {
   const i = tabs.findIndex(t => t.id === tab.id);
   if (i !== -1) tabs[i] = tab;
-  if (tab.id === activeId) { address.value = tab.url; updateToolbarState(); }
-  renderTabs();
+  if (tab.id === activeId && document.activeElement !== address) {
+    address.value = tab.url;
+  }
+  scheduleTabsRender();
+  scheduleToolbarUpdate();
 });
-window.ag.onDlCreated((d) => { dls.push(d); renderDownloads(); });
-window.ag.onDlProgress((p) => { const i = dls.findIndex(x => x.id === p.id); if (i !== -1) { dls[i] = { ...dls[i], ...p }; renderDownloads(); } });
-window.ag.onDlDone((p) => { const i = dls.findIndex(x => x.id === p.id); if (i !== -1) { dls[i] = { ...dls[i], ...p }; renderDownloads(); } });
-window.ag.onExtList((list) => { exts = list; renderExtensions(); });
+window.ag.onDlCreated((d) => {
+  dls.push(d);
+  scheduleDownloadsRender();
+});
+window.ag.onDlProgress((p) => {
+  const i = dls.findIndex(x => x.id === p.id);
+  if (i !== -1) {
+    dls[i] = { ...dls[i], ...p };
+    scheduleDownloadsRender();
+  }
+});
+window.ag.onDlDone((p) => {
+  const i = dls.findIndex(x => x.id === p.id);
+  if (i !== -1) {
+    dls[i] = { ...dls[i], ...p };
+    scheduleDownloadsRender();
+  }
+});
+window.ag.onExtList((list) => {
+  exts = list;
+  scheduleExtensionsRender();
+});
 window.ag.onWindowState((nextState) => applyWindowState(nextState));
 
 // Focus address bar (triggered by Cmd/Ctrl+L from menu)
