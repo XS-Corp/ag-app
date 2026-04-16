@@ -49,6 +49,9 @@ contextBridge.exposeInMainWorld('ag', {
   // settings
   settingsGet: () => ipcRenderer.invoke('settings:get'),
   settingsSet: (s) => ipcRenderer.invoke('settings:set', s),
+  permissionsClear: () => ipcRenderer.invoke('permissions:clear'),
+  permissionRespond: (response) => ipcRenderer.invoke('permission:respond', response),
+  onPermissionPrompt: (cb) => ipcRenderer.on('permission:prompt', (_e, payload) => cb(payload)),
 
   // UI visibility
   toggleUiHide: () => ipcRenderer.invoke('ui:toggleHide'),

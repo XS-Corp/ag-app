@@ -85,6 +85,22 @@ const btnThemeLight = document.getElementById('btnThemeLight');
 const selectLanguage = document.getElementById('selectLanguage');
 const inputHomepage = document.getElementById('inputHomepage');
 const btnSaveHomepage = document.getElementById('btnSaveHomepage');
+const btnClearPermissions = document.getElementById('btnClearPermissions');
+const permissionOverlay = document.getElementById('permissionOverlay');
+const permissionModal = document.getElementById('permissionModal');
+const permissionTitle = document.getElementById('permissionTitle');
+const permissionSite = document.getElementById('permissionSite');
+const permissionMessage = document.getElementById('permissionMessage');
+const permissionOriginLabel = document.getElementById('permissionOriginLabel');
+const permissionOriginValue = document.getElementById('permissionOriginValue');
+const permissionNote = document.getElementById('permissionNote');
+const permissionRememberRow = document.getElementById('permissionRememberRow');
+const permissionRemember = document.getElementById('permissionRemember');
+const permissionRememberText = document.getElementById('permissionRememberText');
+const permissionSources = document.getElementById('permissionSources');
+const btnPermissionDeny = document.getElementById('btnPermissionDeny');
+const btnPermissionAlwaysAllow = document.getElementById('btnPermissionAlwaysAllow');
+const btnPermissionAllow = document.getElementById('btnPermissionAllow');
 
 populateLanguageSelect();
 
@@ -99,6 +115,8 @@ let contextMenu = null;
 let settings = {};
 let extThemeHref = '';
 let windowState = { isMaximized: false };
+let permissionRequestState = null;
+let selectedPermissionSourceId = null;
 const scheduledUiTasks = new Map();
 
 /* ===== Helpers ===== */
@@ -196,6 +214,14 @@ function scheduleDownloadsRender() {
 function scheduleExtensionsRender() {
   if (activePanel !== panelExtensions) return;
   scheduleUiTask('extensions', renderExtensions);
+}
+
+function syncBrowserVisibility() {
+  if (activePanel || permissionRequestState) {
+    window.ag.hideActiveView();
+  } else {
+    window.ag.showActiveView();
+  }
 }
 
 /* ===== Theme / Settings ===== */
@@ -358,21 +384,25 @@ address.addEventListener('blur', () => {
 });
 
 /* ===== Panels ===== */
-function showPanel(panel) {
-  hideAllPanels();
-  panel.classList.remove('hidden');
-  panelOverlay.classList.remove('hidden');
-  activePanel = panel;
-  window.ag.hideActiveView();
-}
-
-function hideAllPanels() {
+function hidePanelsOnly() {
   panelDownloads.classList.add('hidden');
   panelExtensions.classList.add('hidden');
   panelSettings.classList.add('hidden');
   panelOverlay.classList.add('hidden');
   activePanel = null;
-  window.ag.showActiveView();
+}
+
+function showPanel(panel) {
+  hidePanelsOnly();
+  panel.classList.remove('hidden');
+  panelOverlay.classList.remove('hidden');
+  activePanel = panel;
+  syncBrowserVisibility();
+}
+
+function hideAllPanels() {
+  hidePanelsOnly();
+  syncBrowserVisibility();
 }
 
 btnDownloads.onclick = async () => {
@@ -411,10 +441,133 @@ btnSettings.onclick = async () => {
 };
 btnCloseSettings.onclick = () => hideAllPanels();
 
+btnClearPermissions.onclick = async () => {
+  await window.ag.permissionsClear();
+  btnClearPermissions.textContent = t('savedPermissionsCleared');
+  setTimeout(() => {
+    btnClearPermissions.textContent = t('clearSavedPermissions');
+  }, 1500);
+};
+
 panelOverlay.onclick = () => hideAllPanels();
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && permissionRequestState) {
+    e.preventDefault();
+    submitPermissionResponse('deny');
+    return;
+  }
   if (e.key === 'Escape' && activePanel) hideAllPanels();
 });
+
+/* ===== Permission Prompts ===== */
+function closePermissionPrompt() {
+  permissionOverlay.classList.add('hidden');
+  permissionRequestState = null;
+  selectedPermissionSourceId = null;
+  permissionRemember.checked = false;
+  permissionSources.innerHTML = '';
+  permissionSources.classList.add('hidden');
+  btnPermissionAlwaysAllow.classList.add('hidden');
+  btnPermissionAlwaysAllow.textContent = '';
+  permissionNote.textContent = '';
+  permissionNote.classList.add('hidden');
+  syncBrowserVisibility();
+}
+
+function renderPermissionSources(sources = []) {
+  permissionSources.innerHTML = '';
+  permissionSources.classList.toggle('hidden', sources.length === 0);
+
+  sources.forEach((source) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'permission-source' + (source.id === selectedPermissionSourceId ? ' active' : '');
+    button.setAttribute('data-source-id', source.id);
+
+    const thumb = source.thumbnail
+      ? `<img src="${escapeHtml(source.thumbnail)}" alt="" />`
+      : `<div class="permission-source-placeholder">${escapeHtml(source.kind || '')}</div>`;
+    const icon = source.icon
+      ? `<img class="permission-source-app-icon" src="${escapeHtml(source.icon)}" alt="" />`
+      : '';
+
+    button.innerHTML = `
+      <div class="permission-source-thumb">${thumb}</div>
+      <div class="permission-source-meta">
+        <div>
+          <div class="permission-source-name">${escapeHtml(source.name)}</div>
+          <div class="permission-source-kind">${escapeHtml(source.kind || '')}</div>
+        </div>
+        ${icon}
+      </div>
+    `;
+
+    button.onclick = () => {
+      selectedPermissionSourceId = source.id;
+      renderPermissionSources(sources);
+      btnPermissionAllow.disabled = false;
+    };
+
+    permissionSources.appendChild(button);
+  });
+}
+
+function showPermissionPrompt(payload) {
+  hidePanelsOnly();
+  permissionRequestState = payload;
+  selectedPermissionSourceId = null;
+
+  permissionTitle.textContent = payload.title || '';
+  permissionSite.textContent = payload.site || '';
+  permissionMessage.textContent = payload.message || '';
+  permissionOriginLabel.textContent = payload.originLabel || '';
+  permissionOriginValue.textContent = payload.origin || '';
+  permissionRememberText.textContent = payload.rememberLabel || '';
+  permissionRememberRow.classList.toggle('hidden', payload.canRemember === false);
+  permissionRemember.checked = false;
+  btnPermissionDeny.textContent = payload.denyLabel || t('permissionDeny');
+  btnPermissionAllow.textContent = payload.allowLabel || t('permissionAllow');
+  btnPermissionAlwaysAllow.textContent = payload.alwaysAllowLabel || '';
+  btnPermissionAlwaysAllow.classList.toggle('hidden', !payload.alwaysAllowLabel);
+
+  if (payload.note) {
+    permissionNote.textContent = payload.note;
+    permissionNote.classList.remove('hidden');
+  } else {
+    permissionNote.textContent = '';
+    permissionNote.classList.add('hidden');
+  }
+
+  renderPermissionSources(payload.sources || []);
+  btnPermissionAllow.disabled = payload.kind === 'display-source';
+
+  permissionOverlay.classList.remove('hidden');
+  syncBrowserVisibility();
+}
+
+function submitPermissionResponse(action) {
+  if (!permissionRequestState) return;
+
+  const response = {
+    id: permissionRequestState.id,
+    action,
+    remember: !!permissionRemember.checked
+  };
+
+  if (permissionRequestState.kind === 'display-source') {
+    response.sourceId = selectedPermissionSourceId;
+  }
+
+  closePermissionPrompt();
+  window.ag.permissionRespond(response).catch(() => {});
+}
+
+btnPermissionDeny.onclick = () => submitPermissionResponse('deny');
+btnPermissionAlwaysAllow.onclick = () => submitPermissionResponse('allow-always');
+btnPermissionAllow.onclick = () => {
+  if (permissionRequestState?.kind === 'display-source' && !selectedPermissionSourceId) return;
+  submitPermissionResponse('allow');
+};
 
 /* ===== Downloads Rendering ===== */
 function renderDownloads() {
@@ -534,6 +687,7 @@ window.ag.onExtList((list) => {
   scheduleExtensionsRender();
 });
 window.ag.onWindowState((nextState) => applyWindowState(nextState));
+window.ag.onPermissionPrompt((payload) => showPermissionPrompt(payload));
 
 // Focus address bar (triggered by Cmd/Ctrl+L from menu)
 window.ag.onFocusAddress(() => {
@@ -549,7 +703,12 @@ window.ag.onReloadCss(() => {
 // UI visibility
 window.ag.onUiVisibility((visible) => {
   if (visible) { document.body.classList.remove('browser-fullscreen'); isBrowserFullscreen = false; }
-  else { document.body.classList.add('browser-fullscreen'); isBrowserFullscreen = true; hideAllPanels(); }
+  else {
+    document.body.classList.add('browser-fullscreen');
+    isBrowserFullscreen = true;
+    hideAllPanels();
+    if (permissionRequestState) submitPermissionResponse('deny');
+  }
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'F11') { e.preventDefault(); window.ag.toggleUiHide(); } });
 

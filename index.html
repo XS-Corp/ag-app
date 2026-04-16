@@ -101,6 +101,41 @@
           <button id="btnSaveHomepage" data-i18n="save">Save</button>
         </div>
       </div>
+      <div class="setting-row">
+        <label data-i18n="sitePermissions">Site permissions</label>
+        <div class="setting-control">
+          <button id="btnClearPermissions" class="settings-secondary-btn" data-i18n="clearSavedPermissions">Clear saved permissions</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="permissionOverlay" class="permission-overlay hidden">
+    <div id="permissionModal" class="permission-modal" role="dialog" aria-modal="true" aria-labelledby="permissionTitle">
+      <div class="permission-header">
+        <div>
+          <div id="permissionTitle" class="permission-title"></div>
+          <div id="permissionSite" class="permission-site"></div>
+        </div>
+      </div>
+      <div class="permission-body">
+        <div id="permissionMessage" class="permission-message"></div>
+        <div class="permission-origin-row">
+          <span id="permissionOriginLabel" class="permission-origin-label"></span>
+          <span id="permissionOriginValue" class="permission-origin-value"></span>
+        </div>
+        <div id="permissionNote" class="permission-note hidden"></div>
+        <label id="permissionRememberRow" class="permission-remember">
+          <input id="permissionRemember" type="checkbox" />
+          <span id="permissionRememberText"></span>
+        </label>
+        <div id="permissionSources" class="permission-sources hidden"></div>
+      </div>
+      <div class="permission-actions">
+        <button id="btnPermissionDeny" class="permission-btn permission-btn-secondary" type="button"></button>
+        <button id="btnPermissionAlwaysAllow" class="permission-btn permission-btn-secondary hidden" type="button"></button>
+        <button id="btnPermissionAllow" class="permission-btn permission-btn-primary" type="button"></button>
+      </div>
     </div>
   </div>
 

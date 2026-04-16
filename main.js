@@ -1,4 +1,15 @@
-const { app, BrowserWindow, BrowserView, ipcMain, shell, dialog, globalShortcut, Menu } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  BrowserView,
+  ipcMain,
+  shell,
+  dialog,
+  globalShortcut,
+  Menu,
+  desktopCapturer,
+  systemPreferences
+} = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { fileURLToPath, pathToFileURL } = require('url');
@@ -14,6 +25,26 @@ const SAFE_VIEW_EXTERNAL_PROTOCOLS = new Set(['mailto:', 'tel:']);
 const SAFE_UI_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:']);
 const HOSTLIKE_INPUT_RE = /^(localhost|\d{1,3}(?:\.\d{1,3}){3}|(?:[a-z0-9-]+\.)+[a-z]{2,})(?::\d+)?(?:[/?#].*)?$/i;
 const LOCAL_HOST_INPUT_RE = /^(localhost|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:[/?#].*)?$/i;
+const LOOPBACK_HOST_RE = /^(localhost|127(?:\.\d{1,3}){3}|::1|\[::1\])$/i;
+const DISPLAY_SOURCE_THUMBNAIL_SIZE = { width: 360, height: 220 };
+const AUTO_ALLOWED_PERMISSIONS = new Set(['fullscreen', 'clipboard-sanitized-write']);
+const ALWAYS_ALLOW_PERMISSIONS = new Set(['storage-access', 'top-level-storage-access']);
+const REQUESTABLE_PERMISSION_CHECKS = new Set(['media', 'storage-access', 'top-level-storage-access']);
+const PROMPTED_PERMISSIONS = new Set([
+  'media',
+  'display-capture',
+  'fileSystem',
+  'geolocation',
+  'notifications',
+  'clipboard-read',
+  'idle-detection',
+  'openExternal',
+  'speaker-selection',
+  'storage-access',
+  'top-level-storage-access',
+  'window-management',
+  'keyboardLock'
+]);
 
 let win;
 let tabs = [];
@@ -25,6 +56,9 @@ let uiHidden = false;
 let store = {};
 let closedTabsStack = []; // for Cmd/Ctrl+Shift+T (reopen closed tab)
 let activeHtmlOverridePath = null;
+let nextPermissionPromptId = 1;
+let permissionPromptQueue = Promise.resolve();
+const pendingPermissionPrompts = new Map();
 
 function getRuntimeRoot() {
   return app.getPath('userData');
@@ -132,6 +166,13 @@ function isSecureOrigin(origin) {
   return !!parsed && parsed.protocol === 'https:';
 }
 
+function isTrustworthyPermissionOrigin(origin) {
+  const parsed = safeParseUrl(origin);
+  if (!parsed) return false;
+  if (parsed.protocol === 'https:') return true;
+  return parsed.protocol === 'http:' && LOOPBACK_HOST_RE.test(parsed.hostname);
+}
+
 function isExtensionOrigin(origin) {
   const parsed = safeParseUrl(origin);
   if (!parsed) return false;
@@ -155,30 +196,544 @@ function openExternalUrl(rawUrl, allowedProtocols) {
   return true;
 }
 
-function shouldAllowPermission(permission, details = {}) {
-  if (isExtensionOrigin(details.requestingOrigin)) {
-    return true;
+function formatString(template, replacements = {}) {
+  return String(template || '').replace(/\{\{(\w+)\}\}/g, (_match, key) => {
+    const value = replacements[key];
+    return value == null ? '' : String(value);
+  });
+}
+
+function getCurrentUiStrings() {
+  return getUiStrings(store.settings?.lang || DEFAULT_LANG);
+}
+
+function getOriginFromUrl(rawUrl) {
+  const parsed = safeParseUrl(rawUrl);
+  if (!parsed) return '';
+  if (parsed.origin && parsed.origin !== 'null') return parsed.origin;
+  return parsed.href || '';
+}
+
+function getRequestOrigin(details = {}) {
+  return getOriginFromUrl(
+    details.securityOrigin ||
+    details.requestingOrigin ||
+    details.requestingUrl ||
+    details.externalURL
+  );
+}
+
+function getSiteDisplayName(origin) {
+  const parsed = safeParseUrl(origin);
+  return parsed?.hostname || origin || 'Unknown site';
+}
+
+function ensurePermissionStore() {
+  if (!store.permissions || typeof store.permissions !== 'object') {
+    store.permissions = {};
+  }
+}
+
+function getPermissionBucket(origin, create = false) {
+  ensurePermissionStore();
+  if (!origin) return null;
+  if (!store.permissions[origin] && create) {
+    store.permissions[origin] = {};
+  }
+  return store.permissions[origin] || null;
+}
+
+function getStoredPermissionDecision(origin, key) {
+  return getPermissionBucket(origin)?.[key] || null;
+}
+
+function setStoredPermissionDecision(origin, key, decision) {
+  if (!origin || !key) return;
+
+  if (!decision) {
+    const bucket = getPermissionBucket(origin);
+    if (!bucket) return;
+    delete bucket[key];
+    if (!Object.keys(bucket).length) {
+      delete store.permissions[origin];
+    }
+    saveStore();
+    return;
   }
 
+  const bucket = getPermissionBucket(origin, true);
+  bucket[key] = decision;
+  saveStore();
+}
+
+function clearStoredPermissionDecisions() {
+  store.permissions = {};
+  saveStore();
+}
+
+function queuePermissionPrompt(task) {
+  const scheduled = permissionPromptQueue.then(task, task);
+  permissionPromptQueue = scheduled.catch(() => undefined);
+  return scheduled;
+}
+
+function resolvePendingPermissionPrompt(id, response) {
+  const entry = pendingPermissionPrompts.get(id);
+  if (!entry) return false;
+  pendingPermissionPrompts.delete(id);
+  entry.resolve(response);
+  return true;
+}
+
+function denyAllPendingPermissionPrompts() {
+  for (const [id, entry] of pendingPermissionPrompts.entries()) {
+    entry.resolve({ id, action: 'deny', remember: false });
+  }
+  pendingPermissionPrompts.clear();
+}
+
+function promptInUi(payload) {
+  if (!win || win.isDestroyed()) {
+    return Promise.resolve({ action: 'deny', remember: false });
+  }
+
+  return queuePermissionPrompt(() => new Promise((resolve) => {
+    const id = nextPermissionPromptId++;
+    pendingPermissionPrompts.set(id, { resolve });
+    win.webContents.send('permission:prompt', { id, ...payload });
+  }));
+}
+
+function getPermissionStorageKeys(permission, details = {}) {
   switch (permission) {
-    case 'fullscreen':
-    case 'clipboard-sanitized-write':
-      return true;
+    case 'media': {
+      const wantsAudio = details.mediaTypes?.includes('audio') || details.mediaType === 'audio';
+      const wantsVideo = details.mediaTypes?.includes('video') || details.mediaType === 'video';
+      const keys = [];
+      if (wantsVideo || !wantsAudio) keys.push('camera');
+      if (wantsAudio || !wantsVideo) keys.push('microphone');
+      return Array.from(new Set(keys));
+    }
+    case 'display-capture':
+      return ['displayCapture'];
+    case 'fileSystem':
+      return [details.fileAccessType === 'writable' ? 'fileSystemWrite' : 'fileSystemRead'];
+    case 'geolocation':
+      return ['geolocation'];
+    case 'notifications':
+      return ['notifications'];
+    case 'clipboard-read':
+      return ['clipboardRead'];
+    case 'idle-detection':
+      return ['idleDetection'];
+    case 'openExternal':
+      return ['openExternal'];
+    case 'speaker-selection':
+      return ['speakerSelection'];
+    case 'storage-access':
+    case 'top-level-storage-access':
+      return ['storageAccess'];
+    case 'window-management':
+      return ['windowManagement'];
+    case 'keyboardLock':
+      return ['keyboardLock'];
+    default:
+      return [];
+  }
+}
+
+function getStoredPermissionResult(permission, details = {}) {
+  const origin = getRequestOrigin(details);
+  const keys = getPermissionStorageKeys(permission, details);
+  if (!origin || !keys.length) return null;
+
+  let sawAllow = false;
+  for (const key of keys) {
+    const stored = getStoredPermissionDecision(origin, key);
+    if (stored === 'deny') return false;
+    if (stored === 'allow') sawAllow = true;
+    if (!stored) return null;
+  }
+  return sawAllow ? true : null;
+}
+
+function persistPermissionDecision(permission, details, allowed) {
+  const origin = getRequestOrigin(details);
+  const keys = getPermissionStorageKeys(permission, details);
+  if (!origin || !keys.length) return;
+
+  for (const key of keys) {
+    setStoredPermissionDecision(origin, key, allowed ? 'allow' : 'deny');
+  }
+}
+
+function getPermissionLabelKey(permission, details = {}) {
+  switch (permission) {
+    case 'media': {
+      const wantsAudio = details.mediaTypes?.includes('audio') || details.mediaType === 'audio';
+      const wantsVideo = details.mediaTypes?.includes('video') || details.mediaType === 'video';
+      if (wantsAudio && wantsVideo) return 'permissionLabelCameraAndMicrophone';
+      if (wantsVideo) return 'permissionLabelCamera';
+      return 'permissionLabelMicrophone';
+    }
+    case 'display-capture':
+      return 'permissionLabelScreen';
+    case 'fileSystem':
+      return 'permissionLabelFiles';
+    case 'geolocation':
+      return 'permissionLabelLocation';
+    case 'notifications':
+      return 'permissionLabelNotifications';
+    case 'clipboard-read':
+      return 'permissionLabelClipboard';
+    case 'idle-detection':
+      return 'permissionLabelIdleDetection';
+    case 'openExternal':
+      return 'permissionLabelExternalApps';
+    case 'speaker-selection':
+      return 'permissionLabelSpeakerSelection';
+    case 'storage-access':
+    case 'top-level-storage-access':
+      return 'permissionLabelCookiesAndStorage';
+    case 'window-management':
+      return 'permissionLabelWindowManagement';
+    case 'keyboardLock':
+      return 'permissionLabelKeyboardLock';
+    default:
+      return 'permissionLabelAdditionalAccess';
+  }
+}
+
+function getPermissionPromptNote(permission, details = {}, strings = getCurrentUiStrings()) {
+  if (permission === 'fileSystem') {
+    const parts = [
+      details.fileAccessType === 'writable'
+        ? strings.permissionFileWriteNote
+        : strings.permissionFileReadNote
+    ];
+    if (details.isDirectory) parts.push(strings.permissionFolderNote);
+    return parts.filter(Boolean).join(' ');
+  }
+
+  if (permission === 'display-capture' && process.platform === 'darwin') {
+    return strings.permissionScreenNoteMac;
+  }
+
+  if (permission === 'storage-access' || permission === 'top-level-storage-access') {
+    return strings.permissionStorageAccessNote || '';
+  }
+
+  return '';
+}
+
+function buildPermissionPromptPayload(permission, details = {}) {
+  const strings = getCurrentUiStrings();
+  const origin = getRequestOrigin(details);
+  const site = getSiteDisplayName(origin);
+  const label = strings[getPermissionLabelKey(permission, details)] || strings.permissionLabelStorageAccess || strings.permissionLabelAdditionalAccess;
+  const messageKey = permission === 'display-capture'
+    ? 'permissionScreenPromptMessage'
+    : 'permissionPromptMessage';
+  const allowAlways = ALWAYS_ALLOW_PERMISSIONS.has(permission);
+
+  return {
+    kind: 'permission',
+    title: label,
+    site,
+    origin,
+    originLabel: strings.permissionOrigin,
+    message: formatString(strings[messageKey], { site, permission: label }),
+    note: getPermissionPromptNote(permission, details, strings),
+    allowLabel: permission === 'display-capture'
+      ? strings.permissionShare
+      : (allowAlways ? (strings.permissionAllowOnce || strings.permissionAllow) : strings.permissionAllow),
+    alwaysAllowLabel: allowAlways ? (strings.permissionAlwaysAllow || strings.permissionAllow) : '',
+    denyLabel: permission === 'display-capture' ? strings.permissionCancel : strings.permissionDeny,
+    rememberLabel: allowAlways ? '' : strings.permissionRemember,
+    canRemember: !allowAlways
+  };
+}
+
+function serializeDisplaySource(source, strings) {
+  return {
+    id: source.id,
+    name: source.name,
+    kind: source.id.startsWith('screen:') ? strings.permissionSourceScreen : strings.permissionSourceWindow,
+    thumbnail: source.thumbnail && !source.thumbnail.isEmpty() ? source.thumbnail.toDataURL() : '',
+    icon: source.appIcon && !source.appIcon.isEmpty() ? source.appIcon.toDataURL() : ''
+  };
+}
+
+function buildDisplaySourcePromptPayload(request, sources) {
+  const strings = getCurrentUiStrings();
+  const origin = getOriginFromUrl(request.securityOrigin);
+  const site = getSiteDisplayName(origin);
+
+  return {
+    kind: 'display-source',
+    title: strings.permissionSelectSource,
+    site,
+    origin,
+    originLabel: strings.permissionOrigin,
+    message: formatString(strings.permissionScreenPromptMessage, { site }),
+    note: process.platform === 'darwin' ? strings.permissionScreenNoteMac : '',
+    allowLabel: strings.permissionShare,
+    denyLabel: strings.permissionCancel,
+    canRemember: false,
+    sources: sources.map(source => serializeDisplaySource(source, strings))
+  };
+}
+
+async function showPermissionWarning(message) {
+  if (!message || !win || win.isDestroyed()) return;
+  await dialog.showMessageBox(win, {
+    type: 'warning',
+    title: 'AG Browser',
+    message
+  });
+}
+
+async function ensureSystemMediaAccess(mediaType) {
+  if (process.platform !== 'darwin') return true;
+
+  const strings = getCurrentUiStrings();
+  const blockedMessage = mediaType === 'camera'
+    ? strings.permissionSystemCameraDenied
+    : strings.permissionSystemMicrophoneDenied;
+
+  const status = systemPreferences.getMediaAccessStatus(mediaType);
+  if (status === 'granted' || status === 'unknown') return true;
+  if (status === 'not-determined') {
+    try {
+      const granted = await systemPreferences.askForMediaAccess(mediaType);
+      if (granted) return true;
+    } catch {
+      // fall through to warning
+    }
+  }
+
+  await showPermissionWarning(blockedMessage);
+  return false;
+}
+
+function canRequestSystemMediaAccess(mediaType) {
+  if (process.platform !== 'darwin') return true;
+  const status = systemPreferences.getMediaAccessStatus(mediaType);
+  return status !== 'denied' && status !== 'restricted';
+}
+
+async function ensureMediaSystemAccess(details = {}) {
+  const mediaKeys = getPermissionStorageKeys('media', details);
+  for (const mediaKey of mediaKeys) {
+    const systemMediaType = mediaKey === 'camera' ? 'camera' : 'microphone';
+    const systemAllowed = await ensureSystemMediaAccess(systemMediaType);
+    if (!systemAllowed) return false;
+  }
+  return true;
+}
+
+function canPotentiallyRequestMediaAccess(details = {}) {
+  const mediaKeys = getPermissionStorageKeys('media', details);
+  return mediaKeys.every((mediaKey) => {
+    const systemMediaType = mediaKey === 'camera' ? 'camera' : 'microphone';
+    return canRequestSystemMediaAccess(systemMediaType);
+  });
+}
+
+function getAutoPermissionDecision(permission, details = {}) {
+  const origin = getRequestOrigin(details);
+  if (isExtensionOrigin(origin)) return true;
+  if (AUTO_ALLOWED_PERMISSIONS.has(permission)) return true;
+
+  switch (permission) {
     case 'pointerLock':
-      return isSecureOrigin(details.requestingOrigin);
+      return isTrustworthyPermissionOrigin(origin);
+    case 'mediaKeySystem':
+      return isSecureOrigin(origin);
+    default:
+      return null;
+  }
+}
+
+function canPromptPermission(permission, details = {}) {
+  const origin = getRequestOrigin(details);
+  if (!origin) return false;
+
+  switch (permission) {
+    case 'media':
+    case 'display-capture':
+    case 'fileSystem':
+    case 'geolocation':
+    case 'notifications':
+    case 'clipboard-read':
+    case 'idle-detection':
+    case 'speaker-selection':
+    case 'storage-access':
+    case 'top-level-storage-access':
+    case 'window-management':
+    case 'keyboardLock':
+      return isTrustworthyPermissionOrigin(origin);
+    case 'openExternal': {
+      const target = safeParseUrl(details.externalURL);
+      return !!target && !SAFE_BROWSER_PROTOCOLS.has(target.protocol) && isTrustworthyPermissionOrigin(origin);
+    }
     default:
       return false;
   }
 }
 
-function configureSessionSecurity(sess) {
-  sess.setPermissionRequestHandler((_webContents, permission, callback, details) => {
-    callback(shouldAllowPermission(permission, details));
+async function requestPermissionFromUser(permission, details = {}) {
+  const autoDecision = getAutoPermissionDecision(permission, details);
+  if (autoDecision !== null) {
+    if (autoDecision && permission === 'media') {
+      return ensureMediaSystemAccess(details);
+    }
+    return autoDecision;
+  }
+
+  const storedDecision = getStoredPermissionResult(permission, details);
+  if (storedDecision !== null) {
+    if (storedDecision && permission === 'media') {
+      return ensureMediaSystemAccess(details);
+    }
+    return storedDecision;
+  }
+  if (!PROMPTED_PERMISSIONS.has(permission) || !canPromptPermission(permission, details)) return false;
+
+  const response = await promptInUi(buildPermissionPromptPayload(permission, details));
+  const allowed = response?.action === 'allow' || response?.action === 'allow-always';
+
+  if (allowed && permission === 'media') {
+    const systemAllowed = await ensureMediaSystemAccess(details);
+    if (!systemAllowed) return false;
+  }
+
+  const shouldPersistAllow = response?.action === 'allow-always' || (!!response?.remember && allowed);
+  const shouldPersistDeny = !!response?.remember && !allowed && !ALWAYS_ALLOW_PERMISSIONS.has(permission);
+
+  if (shouldPersistAllow) {
+    persistPermissionDecision(permission, details, true);
+  } else if (shouldPersistDeny) {
+    persistPermissionDecision(permission, details, false);
+  }
+
+  return allowed;
+}
+
+function getPermissionCheckDecision(permission, details = {}) {
+  const autoDecision = getAutoPermissionDecision(permission, details);
+  if (autoDecision !== null) {
+    if (autoDecision && permission === 'media') {
+      return canPotentiallyRequestMediaAccess(details);
+    }
+    return autoDecision;
+  }
+
+  if (!canPromptPermission(permission, details)) return false;
+
+  const storedDecision = getStoredPermissionResult(permission, details);
+  if (storedDecision === false) return false;
+  if (storedDecision === true) {
+    if (permission === 'media') {
+      return canPotentiallyRequestMediaAccess(details);
+    }
+    return true;
+  }
+
+  if (REQUESTABLE_PERMISSION_CHECKS.has(permission)) {
+    if (permission === 'media') {
+      return canPotentiallyRequestMediaAccess(details);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+async function handleDisplayMediaRequest(request, callback) {
+  const origin = getOriginFromUrl(request.securityOrigin);
+  const strings = getCurrentUiStrings();
+
+  if (!origin || !isTrustworthyPermissionOrigin(origin) || request.userGesture === false) {
+    if (request.userGesture === false) {
+      await showPermissionWarning(strings.permissionRequiresGesture);
+    }
+    callback({});
+    return;
+  }
+
+  if (getStoredPermissionDecision(origin, 'displayCapture') === 'deny') {
+    callback({});
+    return;
+  }
+
+  if (process.platform === 'darwin') {
+    const screenStatus = systemPreferences.getMediaAccessStatus('screen');
+    if (screenStatus === 'denied' || screenStatus === 'restricted') {
+      await showPermissionWarning(strings.permissionSystemScreenDenied);
+      callback({});
+      return;
+    }
+  }
+
+  const sources = await desktopCapturer.getSources({
+    types: ['screen', 'window'],
+    thumbnailSize: DISPLAY_SOURCE_THUMBNAIL_SIZE,
+    fetchWindowIcons: true
   });
+
+  if (!sources.length) {
+    await showPermissionWarning(strings.permissionNoDisplaySources);
+    callback({});
+    return;
+  }
+
+  const response = await promptInUi(buildDisplaySourcePromptPayload(request, sources));
+  if (response?.action !== 'allow' || !response.sourceId) {
+    callback({});
+    return;
+  }
+
+  const selectedSource = sources.find(source => source.id === response.sourceId);
+  if (!selectedSource) {
+    callback({});
+    return;
+  }
+
+  const streams = {};
+  if (request.videoRequested !== false) {
+    streams.video = selectedSource;
+  }
+  if (request.audioRequested && process.platform === 'win32') {
+    streams.audio = 'loopbackWithMute';
+  }
+
+  callback(streams);
+}
+
+function configureSessionSecurity(sess) {
+  sess.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    void requestPermissionFromUser(permission, { ...details, requestingOrigin: getRequestOrigin(details) })
+      .then((allowed) => callback(allowed))
+      .catch((error) => {
+        console.warn(`Permission request failed for ${permission}:`, error.message);
+        callback(false);
+      });
+  });
+
+  if (typeof sess.setDisplayMediaRequestHandler === 'function') {
+    sess.setDisplayMediaRequestHandler((request, callback) => {
+      void handleDisplayMediaRequest(request, callback).catch((error) => {
+        console.warn('Display media request failed:', error.message);
+        callback({});
+      });
+    });
+  }
 
   if (typeof sess.setPermissionCheckHandler === 'function') {
     sess.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details = {}) => {
-      return shouldAllowPermission(permission, { ...details, requestingOrigin });
+      const requestDetails = { ...details, requestingOrigin };
+      return getPermissionCheckDecision(permission, requestDetails);
     });
   }
 }
@@ -317,6 +872,7 @@ function loadStore() {
   if (!store.settings.homepage) store.settings.homepage = DEFAULT_HOMEPAGE;
   if (!store.extensions) store.extensions = {};
   if (!store.pinnedTabs) store.pinnedTabs = [];
+  if (!store.permissions || typeof store.permissions !== 'object') store.permissions = {};
 }
 
 function saveStore() {
@@ -434,6 +990,7 @@ async function createWindow() {
 
   win.on('closed', () => {
     globalShortcut.unregisterAll();
+    denyAllPendingPermissionPrompts();
   });
 
   // Trackpad swipe gestures (macOS: two-finger swipe for back/forward)
@@ -1206,6 +1763,15 @@ ipcMain.handle('ext:openPopup', async (_e, extId) => {
     webPreferences: { contextIsolation: true, sandbox: true }
   });
   popupWin.loadFile(path.join(ext.path, popup));
+  return true;
+});
+
+// Permissions UI
+ipcMain.handle('permission:respond', (_e, response = {}) => {
+  return resolvePendingPermissionPrompt(response.id, response);
+});
+ipcMain.handle('permissions:clear', () => {
+  clearStoredPermissionDecisions();
   return true;
 });
 
