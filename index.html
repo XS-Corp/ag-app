@@ -36,6 +36,15 @@
       </div>
       <input id="address" type="text" spellcheck="false" placeholder="" />
       <div class="right-buttons">
+        <button id="btnReadMode" class="toolbar-feature-btn" type="button" aria-pressed="false">
+          <span class="toolbar-glyph toolbar-glyph-read" aria-hidden="true"></span>
+        </button>
+        <button id="btnTranslate" class="toolbar-feature-btn" type="button" aria-pressed="false">
+          <span class="toolbar-glyph toolbar-glyph-translate" aria-hidden="true">
+            <span>A</span>
+            <span>文</span>
+          </span>
+        </button>
         <button id="btnDownloads" title="Downloads">&#x2193;</button>
         <button id="btnExtensions" title="Extensions">&#x2699;</button>
         <button id="btnSettings" title="Settings">&#x2630;</button>
@@ -45,6 +54,8 @@
   </div>
 
   <div id="panelOverlay" class="panel-overlay hidden"></div>
+
+  <div id="toastHost" class="toast-host" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Downloads -->
   <div id="panelDownloads" class="panel hidden">
@@ -70,6 +81,31 @@
       </div>
     </div>
     <div id="extensionsList" class="list"></div>
+  </div>
+
+  <!-- Translate -->
+  <div id="panelTranslate" class="panel hidden">
+    <div class="panel-header">
+      <div class="panel-title" data-i18n="translatePanelTitle">Translate site</div>
+      <div class="panel-actions">
+        <button id="btnCloseTranslate" class="btn-icon">&#x2715;</button>
+      </div>
+    </div>
+    <div class="translate-body">
+      <div class="setting-row">
+        <label for="selectTranslateLanguage" data-i18n="translateLanguage">Target language</label>
+        <div class="setting-control">
+          <select id="selectTranslateLanguage" class="setting-select" aria-label="Target language"></select>
+        </div>
+      </div>
+      <div id="translateStatus" class="translate-status"></div>
+      <div id="translatePageUrl" class="translate-page-url"></div>
+      <div class="translate-note" data-i18n="translateProviderNote">Translation opens the current page through Google Translate.</div>
+      <div class="translate-actions">
+        <button id="btnTranslateApply" class="settings-primary-btn" data-i18n="translatePage">Translate page</button>
+        <button id="btnTranslateRestore" class="settings-secondary-btn" data-i18n="showOriginal">Show original</button>
+      </div>
+    </div>
   </div>
 
   <!-- Settings -->

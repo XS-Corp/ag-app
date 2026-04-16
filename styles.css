@@ -351,17 +351,74 @@ html[data-platform="darwin"] .window-frame__dot {
   line-height: 1;
 }
 .nav-buttons button:hover:not(:disabled),
-.right-buttons button:hover {
+.right-buttons button:hover:not(:disabled) {
   background: var(--tab-hover);
   border-color: var(--border-strong);
 }
 .nav-buttons button:active:not(:disabled),
-.right-buttons button:active {
+.right-buttons button:active:not(:disabled) {
   transform: scale(0.95);
 }
 .nav-buttons button:disabled {
   opacity: 0.3;
   cursor: default;
+}
+
+.toolbar-feature-btn {
+  width: 34px;
+  height: 32px;
+  padding: 0 !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toolbar-feature-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.toolbar-feature-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  box-shadow: none;
+}
+
+.toolbar-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.toolbar-glyph-read {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  border: 1.5px solid currentColor;
+  background:
+    linear-gradient(currentColor, currentColor) 4px 4px / 8px 1.5px no-repeat,
+    linear-gradient(currentColor, currentColor) 4px 7px / 8px 1.5px no-repeat,
+    linear-gradient(currentColor, currentColor) 4px 10px / 6px 1.5px no-repeat;
+  opacity: 0.9;
+}
+
+.toolbar-glyph-translate {
+  gap: 1px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.toolbar-glyph-translate span:first-child {
+  font-size: 11px;
+}
+
+.toolbar-glyph-translate span:last-child {
+  font-size: 9px;
+  transform: translateY(1px);
 }
 
 .btn-new {
@@ -400,6 +457,48 @@ html[data-platform="darwin"] .window-frame__dot {
   background: var(--overlay-bg);
   z-index: 1998;
   backdrop-filter: blur(2px);
+}
+
+.toast-host {
+  position: fixed;
+  right: 14px;
+  bottom: 16px;
+  z-index: 2500;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.toast {
+  min-width: 240px;
+  max-width: min(360px, calc(100vw - 28px));
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border-strong);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0)),
+    var(--panel-bg);
+  color: var(--fg);
+  box-shadow: var(--shadow-sm);
+  font-size: 12.5px;
+  line-height: 1.45;
+  pointer-events: auto;
+  animation: toast-in 0.22s ease;
+}
+
+.toast.toast-hiding {
+  animation: toast-out 0.18s ease forwards;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes toast-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(10px); }
 }
 
 /* ===== Panels ===== */
@@ -707,6 +806,64 @@ html[data-platform="darwin"] .window-frame__dot {
   border-color: var(--border-strong);
 }
 
+.settings-primary-btn {
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.settings-primary-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.settings-primary-btn:disabled,
+.settings-secondary-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.translate-body {
+  padding: 16px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.translate-status {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--tab-bg);
+  padding: 12px 13px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.translate-page-url {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+  word-break: break-all;
+  unicode-bidi: plaintext;
+}
+
+.translate-note {
+  color: var(--fg-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.translate-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* ===== Permission Prompt ===== */
 .permission-overlay {
   position: fixed;
@@ -943,6 +1100,9 @@ body.is-rtl .panel-title,
 body.is-rtl .item .title,
 body.is-rtl .item .sub,
 body.is-rtl .context-menu-item,
+body.is-rtl .translate-status,
+body.is-rtl .translate-page-url,
+body.is-rtl .translate-note,
 body.is-rtl .permission-title,
 body.is-rtl .permission-site,
 body.is-rtl .permission-message,
@@ -1013,6 +1173,29 @@ body.is-rtl .permission-source {
 
   .setting-control {
     justify-content: stretch;
+  }
+
+  .toolbar {
+    gap: 6px;
+  }
+
+  .right-buttons {
+    gap: 3px;
+  }
+
+  .toolbar-feature-btn,
+  .nav-buttons button,
+  .right-buttons button {
+    width: 32px;
+    min-width: 32px;
+  }
+
+  .translate-actions {
+    flex-direction: column;
+  }
+
+  .translate-actions button {
+    width: 100%;
   }
 }
 

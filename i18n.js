@@ -1339,7 +1339,18 @@
       permissionLabelCookiesAndStorage: "Cookie и межсайтовое хранилище",
       permissionLabelKeyboardLock: "Блокировка клавиатуры",
       permissionSourceScreen: "Экран",
-      permissionSourceWindow: "Окно"
+      permissionSourceWindow: "Окно",
+      readMode: "Режим чтения",
+      exitReadMode: "Выключить режим чтения",
+      translatePanelTitle: "Перевод сайта",
+      translateLanguage: "Язык перевода",
+      translatePage: "Перевести страницу",
+      showOriginal: "Показать оригинал",
+      translateProviderNote: "Перевод применяется прямо на странице через Google Translate.",
+      translateStatusReady: "Перевести эту страницу на {{language}}.",
+      translateStatusActive: "Страница переведена на {{language}}.",
+      translateUnavailable: "Откройте обычную страницу сайта по HTTP или HTTPS, чтобы использовать перевод.",
+      readModeUnavailable: "Не удалось собрать удобный режим чтения для этой страницы."
     },
     en: {
       sitePermissions: "Site permissions",
@@ -1384,7 +1395,18 @@
       permissionLabelCookiesAndStorage: "Cookies and cross-site storage",
       permissionLabelKeyboardLock: "Keyboard lock",
       permissionSourceScreen: "Screen",
-      permissionSourceWindow: "Window"
+      permissionSourceWindow: "Window",
+      readMode: "Read mode",
+      exitReadMode: "Exit read mode",
+      translatePanelTitle: "Translate site",
+      translateLanguage: "Target language",
+      translatePage: "Translate page",
+      showOriginal: "Show original",
+      translateProviderNote: "Translation is applied directly on the page through Google Translate.",
+      translateStatusReady: "Translate this page to {{language}}.",
+      translateStatusActive: "Page is translated to {{language}}.",
+      translateUnavailable: "Open a regular HTTP or HTTPS page to use translation.",
+      readModeUnavailable: "Couldn't create a comfortable reading view for this page."
     },
     es: {
       sitePermissions: "Permisos de sitios",
@@ -1425,7 +1447,18 @@
       permissionLabelStorageAccess: "Almacenamiento entre sitios",
       permissionLabelKeyboardLock: "Bloqueo del teclado",
       permissionSourceScreen: "Pantalla",
-      permissionSourceWindow: "Ventana"
+      permissionSourceWindow: "Ventana",
+      readMode: "Modo lectura",
+      exitReadMode: "Salir del modo lectura",
+      translatePanelTitle: "Traducir sitio",
+      translateLanguage: "Idioma de traducción",
+      translatePage: "Traducir página",
+      showOriginal: "Mostrar original",
+      translateProviderNote: "La traducción abre la página actual a través de Google Translate.",
+      translateStatusReady: "Traducir esta página a {{language}}.",
+      translateStatusActive: "La página está traducida a {{language}}.",
+      translateUnavailable: "Abre una página web normal por HTTP o HTTPS para usar la traducción.",
+      readModeUnavailable: "No se pudo crear una vista de lectura cómoda para esta página."
     },
     "pt-BR": {
       sitePermissions: "Permissões de sites",
@@ -1466,7 +1499,18 @@
       permissionLabelStorageAccess: "Armazenamento entre sites",
       permissionLabelKeyboardLock: "Bloqueio de teclado",
       permissionSourceScreen: "Tela",
-      permissionSourceWindow: "Janela"
+      permissionSourceWindow: "Janela",
+      readMode: "Modo de leitura",
+      exitReadMode: "Sair do modo de leitura",
+      translatePanelTitle: "Traduzir site",
+      translateLanguage: "Idioma da tradução",
+      translatePage: "Traduzir página",
+      showOriginal: "Mostrar original",
+      translateProviderNote: "A tradução abre a página atual pelo Google Translate.",
+      translateStatusReady: "Traduzir esta página para {{language}}.",
+      translateStatusActive: "A página está traduzida para {{language}}.",
+      translateUnavailable: "Abra uma página de site comum em HTTP ou HTTPS para usar a tradução.",
+      readModeUnavailable: "Não foi possível montar um modo de leitura confortável para esta página."
     },
     de: {
       sitePermissions: "Website-Berechtigungen",
@@ -1507,7 +1551,18 @@
       permissionLabelStorageAccess: "Website-übergreifender Speicher",
       permissionLabelKeyboardLock: "Tastatursperre",
       permissionSourceScreen: "Bildschirm",
-      permissionSourceWindow: "Fenster"
+      permissionSourceWindow: "Fenster",
+      readMode: "Lesemodus",
+      exitReadMode: "Lesemodus beenden",
+      translatePanelTitle: "Website übersetzen",
+      translateLanguage: "Zielsprache",
+      translatePage: "Seite übersetzen",
+      showOriginal: "Original anzeigen",
+      translateProviderNote: "Die Übersetzung öffnet die aktuelle Seite über Google Translate.",
+      translateStatusReady: "Diese Seite in {{language}} übersetzen.",
+      translateStatusActive: "Die Seite ist in {{language}} übersetzt.",
+      translateUnavailable: "Öffnen Sie eine normale Website über HTTP oder HTTPS, um die Übersetzung zu verwenden.",
+      readModeUnavailable: "Für diese Seite konnte keine angenehme Leseansicht erstellt werden."
     },
     fr: {
       sitePermissions: "Autorisations des sites",
@@ -1548,7 +1603,18 @@
       permissionLabelStorageAccess: "Stockage intersites",
       permissionLabelKeyboardLock: "Verrouillage du clavier",
       permissionSourceScreen: "Écran",
-      permissionSourceWindow: "Fenêtre"
+      permissionSourceWindow: "Fenêtre",
+      readMode: "Mode lecture",
+      exitReadMode: "Quitter le mode lecture",
+      translatePanelTitle: "Traduire le site",
+      translateLanguage: "Langue de traduction",
+      translatePage: "Traduire la page",
+      showOriginal: "Afficher l'original",
+      translateProviderNote: "La traduction ouvre la page actuelle via Google Translate.",
+      translateStatusReady: "Traduire cette page en {{language}}.",
+      translateStatusActive: "La page est traduite en {{language}}.",
+      translateUnavailable: "Ouvrez une page web classique en HTTP ou HTTPS pour utiliser la traduction.",
+      readModeUnavailable: "Impossible de créer une vue de lecture confortable pour cette page."
     },
     "zh-CN": {
       sitePermissions: "网站权限",
@@ -1589,7 +1655,18 @@
       permissionLabelStorageAccess: "跨站存储",
       permissionLabelKeyboardLock: "键盘锁定",
       permissionSourceScreen: "屏幕",
-      permissionSourceWindow: "窗口"
+      permissionSourceWindow: "窗口",
+      readMode: "阅读模式",
+      exitReadMode: "退出阅读模式",
+      translatePanelTitle: "翻译网站",
+      translateLanguage: "翻译语言",
+      translatePage: "翻译页面",
+      showOriginal: "显示原文",
+      translateProviderNote: "翻译会通过 Google Translate 打开当前页面。",
+      translateStatusReady: "将此页面翻译为 {{language}}。",
+      translateStatusActive: "此页面已翻译为 {{language}}。",
+      translateUnavailable: "请打开一个普通的 HTTP 或 HTTPS 网页以使用翻译。",
+      readModeUnavailable: "无法为此页面创建舒适的阅读视图。"
     },
     "zh-TW": {
       sitePermissions: "網站權限",
@@ -1630,7 +1707,18 @@
       permissionLabelStorageAccess: "跨網站儲存",
       permissionLabelKeyboardLock: "鍵盤鎖定",
       permissionSourceScreen: "螢幕",
-      permissionSourceWindow: "視窗"
+      permissionSourceWindow: "視窗",
+      readMode: "閱讀模式",
+      exitReadMode: "退出閱讀模式",
+      translatePanelTitle: "翻譯網站",
+      translateLanguage: "翻譯語言",
+      translatePage: "翻譯頁面",
+      showOriginal: "顯示原文",
+      translateProviderNote: "翻譯會透過 Google Translate 開啟目前頁面。",
+      translateStatusReady: "將此頁面翻譯為 {{language}}。",
+      translateStatusActive: "此頁面已翻譯為 {{language}}。",
+      translateUnavailable: "請開啟一個普通的 HTTP 或 HTTPS 網頁來使用翻譯。",
+      readModeUnavailable: "無法為此頁面建立舒適的閱讀檢視。"
     },
     ja: {
       sitePermissions: "サイトの権限",
@@ -1671,7 +1759,18 @@
       permissionLabelStorageAccess: "クロスサイトストレージ",
       permissionLabelKeyboardLock: "キーボードロック",
       permissionSourceScreen: "画面",
-      permissionSourceWindow: "ウィンドウ"
+      permissionSourceWindow: "ウィンドウ",
+      readMode: "リーダーモード",
+      exitReadMode: "リーダーモードを終了",
+      translatePanelTitle: "サイトを翻訳",
+      translateLanguage: "翻訳先の言語",
+      translatePage: "ページを翻訳",
+      showOriginal: "元のページを表示",
+      translateProviderNote: "翻訳は Google Translate 経由で現在のページを開きます。",
+      translateStatusReady: "このページを {{language}} に翻訳します。",
+      translateStatusActive: "このページは {{language}} に翻訳されています。",
+      translateUnavailable: "翻訳を使うには通常の HTTP または HTTPS のページを開いてください。",
+      readModeUnavailable: "このページの読みやすい表示を作成できませんでした。"
     },
     ko: {
       sitePermissions: "사이트 권한",
@@ -1712,7 +1811,18 @@
       permissionLabelStorageAccess: "사이트 간 저장소",
       permissionLabelKeyboardLock: "키보드 잠금",
       permissionSourceScreen: "화면",
-      permissionSourceWindow: "창"
+      permissionSourceWindow: "창",
+      readMode: "읽기 모드",
+      exitReadMode: "읽기 모드 끄기",
+      translatePanelTitle: "사이트 번역",
+      translateLanguage: "번역 언어",
+      translatePage: "페이지 번역",
+      showOriginal: "원본 보기",
+      translateProviderNote: "번역은 Google Translate를 통해 현재 페이지를 엽니다.",
+      translateStatusReady: "이 페이지를 {{language}}(으)로 번역합니다.",
+      translateStatusActive: "페이지가 {{language}}(으)로 번역되었습니다.",
+      translateUnavailable: "번역을 사용하려면 일반 HTTP 또는 HTTPS 웹페이지를 여세요.",
+      readModeUnavailable: "이 페이지의 읽기 모드를 만들 수 없습니다."
     },
     it: {
       sitePermissions: "Permessi dei siti",
@@ -1753,7 +1863,18 @@
       permissionLabelStorageAccess: "Archiviazione tra siti",
       permissionLabelKeyboardLock: "Blocco tastiera",
       permissionSourceScreen: "Schermo",
-      permissionSourceWindow: "Finestra"
+      permissionSourceWindow: "Finestra",
+      readMode: "Modalità lettura",
+      exitReadMode: "Esci dalla modalità lettura",
+      translatePanelTitle: "Traduci sito",
+      translateLanguage: "Lingua di traduzione",
+      translatePage: "Traduci pagina",
+      showOriginal: "Mostra originale",
+      translateProviderNote: "La traduzione apre la pagina corrente tramite Google Translate.",
+      translateStatusReady: "Traduci questa pagina in {{language}}.",
+      translateStatusActive: "La pagina è tradotta in {{language}}.",
+      translateUnavailable: "Apri una normale pagina web HTTP o HTTPS per usare la traduzione.",
+      readModeUnavailable: "Impossibile creare una vista di lettura comoda per questa pagina."
     },
     tr: {
       sitePermissions: "Site izinleri",
@@ -1794,7 +1915,18 @@
       permissionLabelStorageAccess: "Siteler arası depolama",
       permissionLabelKeyboardLock: "Klavye kilidi",
       permissionSourceScreen: "Ekran",
-      permissionSourceWindow: "Pencere"
+      permissionSourceWindow: "Pencere",
+      readMode: "Okuma modu",
+      exitReadMode: "Okuma modundan çık",
+      translatePanelTitle: "Siteyi çevir",
+      translateLanguage: "Çeviri dili",
+      translatePage: "Sayfayı çevir",
+      showOriginal: "Orijinali göster",
+      translateProviderNote: "Çeviri, mevcut sayfayı Google Translate üzerinden açar.",
+      translateStatusReady: "Bu sayfayı {{language}} diline çevir.",
+      translateStatusActive: "Sayfa {{language}} diline çevrildi.",
+      translateUnavailable: "Çeviriyi kullanmak için normal bir HTTP veya HTTPS web sayfası açın.",
+      readModeUnavailable: "Bu sayfa için rahat bir okuma görünümü oluşturulamadı."
     },
     pl: {
       sitePermissions: "Uprawnienia witryn",
@@ -1835,7 +1967,18 @@
       permissionLabelStorageAccess: "Pamięć między witrynami",
       permissionLabelKeyboardLock: "Blokada klawiatury",
       permissionSourceScreen: "Ekran",
-      permissionSourceWindow: "Okno"
+      permissionSourceWindow: "Okno",
+      readMode: "Tryb czytania",
+      exitReadMode: "Wyłącz tryb czytania",
+      translatePanelTitle: "Tłumaczenie witryny",
+      translateLanguage: "Język tłumaczenia",
+      translatePage: "Przetłumacz stronę",
+      showOriginal: "Pokaż oryginał",
+      translateProviderNote: "Tłumaczenie otwiera bieżącą stronę przez Google Translate.",
+      translateStatusReady: "Przetłumacz tę stronę na {{language}}.",
+      translateStatusActive: "Strona jest przetłumaczona na {{language}}.",
+      translateUnavailable: "Otwórz zwykłą stronę HTTP lub HTTPS, aby użyć tłumaczenia.",
+      readModeUnavailable: "Nie udało się utworzyć wygodnego widoku do czytania dla tej strony."
     },
     uk: {
       sitePermissions: "Дозволи сайтів",
@@ -1876,7 +2019,18 @@
       permissionLabelStorageAccess: "Міжсайтове сховище",
       permissionLabelKeyboardLock: "Блокування клавіатури",
       permissionSourceScreen: "Екран",
-      permissionSourceWindow: "Вікно"
+      permissionSourceWindow: "Вікно",
+      readMode: "Режим читання",
+      exitReadMode: "Вимкнути режим читання",
+      translatePanelTitle: "Переклад сайту",
+      translateLanguage: "Мова перекладу",
+      translatePage: "Перекласти сторінку",
+      showOriginal: "Показати оригінал",
+      translateProviderNote: "Переклад відкриває поточну сторінку через Google Translate.",
+      translateStatusReady: "Перекласти цю сторінку на {{language}}.",
+      translateStatusActive: "Сторінку перекладено на {{language}}.",
+      translateUnavailable: "Відкрийте звичайну сторінку сайту через HTTP або HTTPS, щоб скористатися перекладом.",
+      readModeUnavailable: "Не вдалося створити зручний режим читання для цієї сторінки."
     },
     ar: {
       sitePermissions: "أذونات المواقع",
@@ -1917,7 +2071,18 @@
       permissionLabelStorageAccess: "التخزين عبر المواقع",
       permissionLabelKeyboardLock: "قفل لوحة المفاتيح",
       permissionSourceScreen: "الشاشة",
-      permissionSourceWindow: "النافذة"
+      permissionSourceWindow: "النافذة",
+      readMode: "وضع القراءة",
+      exitReadMode: "إيقاف وضع القراءة",
+      translatePanelTitle: "ترجمة الموقع",
+      translateLanguage: "لغة الترجمة",
+      translatePage: "ترجمة الصفحة",
+      showOriginal: "عرض الأصل",
+      translateProviderNote: "تفتح الترجمة الصفحة الحالية عبر Google Translate.",
+      translateStatusReady: "ترجمة هذه الصفحة إلى {{language}}.",
+      translateStatusActive: "تمت ترجمة الصفحة إلى {{language}}.",
+      translateUnavailable: "افتح صفحة ويب عادية عبر HTTP أو HTTPS لاستخدام الترجمة.",
+      readModeUnavailable: "تعذر إنشاء عرض قراءة مريح لهذه الصفحة."
     },
     hi: {
       sitePermissions: "साइट अनुमतियाँ",
@@ -1958,7 +2123,18 @@
       permissionLabelStorageAccess: "क्रॉस-साइट स्टोरेज",
       permissionLabelKeyboardLock: "कीबोर्ड लॉक",
       permissionSourceScreen: "स्क्रीन",
-      permissionSourceWindow: "विंडो"
+      permissionSourceWindow: "विंडो",
+      readMode: "रीड मोड",
+      exitReadMode: "रीड मोड बंद करें",
+      translatePanelTitle: "साइट अनुवाद",
+      translateLanguage: "अनुवाद भाषा",
+      translatePage: "पेज अनुवाद करें",
+      showOriginal: "मूल दिखाएँ",
+      translateProviderNote: "अनुवाद वर्तमान पेज को Google Translate के जरिए खोलता है.",
+      translateStatusReady: "इस पेज का {{language}} में अनुवाद करें.",
+      translateStatusActive: "यह पेज {{language}} में अनुवादित है.",
+      translateUnavailable: "अनुवाद इस्तेमाल करने के लिए सामान्य HTTP या HTTPS वेबपेज खोलें.",
+      readModeUnavailable: "इस पेज के लिए आरामदायक रीड मोड नहीं बनाया जा सका."
     }
   };
 
@@ -1974,6 +2150,12 @@
 
   function getLangConfig(lang) {
     return LANGUAGE_MAP[normalizeLang(lang)] || LANGUAGE_MAP[DEFAULT_LANG];
+  }
+
+  function getTranslationLangCode(lang) {
+    const normalized = normalizeLang(lang);
+    if (normalized === "pt-BR") return "pt";
+    return normalized;
   }
 
   function getLocale(lang) {
@@ -1993,6 +2175,7 @@
     LANGUAGES,
     normalizeLang,
     getLangConfig,
+    getTranslationLangCode,
     getUiStrings,
     getMenuStrings
   };

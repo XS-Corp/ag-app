@@ -23,6 +23,16 @@ function populateLanguageSelect() {
   });
 }
 
+function populateTranslateLanguageSelect() {
+  selectTranslateLanguage.innerHTML = '';
+  LANGUAGES.forEach((lang) => {
+    const option = document.createElement('option');
+    option.value = lang.code;
+    option.textContent = lang.label;
+    selectTranslateLanguage.appendChild(option);
+  });
+}
+
 function applyI18n() {
   const langConfig = getLangConfig(currentLang);
   document.documentElement.lang = langConfig.htmlLang;
@@ -41,6 +51,10 @@ function applyI18n() {
   btnFwd.title = t('forward');
   btnReload.title = t('reloadPage');
   btnNew.title = t('newTab');
+  btnReadMode.title = tabs.find(x => x.id === activeId)?.readModeEnabled ? t('exitReadMode') : t('readMode');
+  btnReadMode.setAttribute('aria-label', btnReadMode.title);
+  btnTranslate.title = t('translatePage');
+  btnTranslate.setAttribute('aria-label', t('translatePage'));
   btnDownloads.title = t('downloads');
   btnExtensions.title = t('extensions');
   btnSettings.title = t('settings');
@@ -50,6 +64,8 @@ function applyI18n() {
   btnThemeLight.textContent = t('light');
   selectLanguage.setAttribute('aria-label', t('language'));
   selectLanguage.value = currentLang;
+  selectTranslateLanguage.setAttribute('aria-label', t('translateLanguage'));
+  renderTranslatePanel();
   applyWindowState(windowState);
 }
 
@@ -64,10 +80,13 @@ const btnFwd = document.getElementById('btnFwd');
 const btnReload = document.getElementById('btnReload');
 const btnNew = document.getElementById('btnNew');
 const address = document.getElementById('address');
+const btnReadMode = document.getElementById('btnReadMode');
+const btnTranslate = document.getElementById('btnTranslate');
 const btnDownloads = document.getElementById('btnDownloads');
 const btnExtensions = document.getElementById('btnExtensions');
 const btnSettings = document.getElementById('btnSettings');
 const panelOverlay = document.getElementById('panelOverlay');
+const toastHost = document.getElementById('toastHost');
 const panelDownloads = document.getElementById('panelDownloads');
 const downloadsList = document.getElementById('downloadsList');
 const btnCloseDownloads = document.getElementById('btnCloseDownloads');
@@ -78,6 +97,13 @@ const btnCloseExtensions = document.getElementById('btnCloseExtensions');
 const btnReloadExt = document.getElementById('btnReloadExt');
 const btnImportExt = document.getElementById('btnImportExt');
 const btnImportZip = document.getElementById('btnImportZip');
+const panelTranslate = document.getElementById('panelTranslate');
+const btnCloseTranslate = document.getElementById('btnCloseTranslate');
+const selectTranslateLanguage = document.getElementById('selectTranslateLanguage');
+const translateStatus = document.getElementById('translateStatus');
+const translatePageUrl = document.getElementById('translatePageUrl');
+const btnTranslateApply = document.getElementById('btnTranslateApply');
+const btnTranslateRestore = document.getElementById('btnTranslateRestore');
 const panelSettings = document.getElementById('panelSettings');
 const btnCloseSettings = document.getElementById('btnCloseSettings');
 const btnThemeDark = document.getElementById('btnThemeDark');
@@ -103,6 +129,7 @@ const btnPermissionAlwaysAllow = document.getElementById('btnPermissionAlwaysAll
 const btnPermissionAllow = document.getElementById('btnPermissionAllow');
 
 populateLanguageSelect();
+populateTranslateLanguageSelect();
 
 /* ===== State ===== */
 let tabs = [];
@@ -139,6 +166,49 @@ function normalizeUrl(u) {
 function escapeHtml(str) {
   if (!str) return '';
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function formatUiString(template, replacements = {}) {
+  return String(template || '').replace(/\{\{(\w+)\}\}/g, (_match, key) => {
+    const value = replacements[key];
+    return value == null ? '' : String(value);
+  });
+}
+
+function getLanguageLabel(langCode) {
+  return getLangConfig(normalizeLang(langCode)).label;
+}
+
+function getTranslateTargetValue() {
+  return normalizeLang(settings.translateTargetLang || currentLang || DEFAULT_LANG);
+}
+
+function getActiveTab() {
+  return tabs.find(tab => tab.id === activeId) || null;
+}
+
+function isTranslatableTab(tab) {
+  if (!tab) return false;
+  return !!tab.translationOriginalUrl || isHttp(tab.url);
+}
+
+function isReadModeAvailable(tab) {
+  return !!tab && isHttp(tab.url);
+}
+
+function showToast(message) {
+  if (!message) return;
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  toastHost.appendChild(toast);
+
+  const startHide = () => {
+    toast.classList.add('toast-hiding');
+    setTimeout(() => toast.remove(), 180);
+  };
+
+  setTimeout(startHide, 2400);
 }
 
 function fmtBytes(n) {
@@ -216,6 +286,11 @@ function scheduleExtensionsRender() {
   scheduleUiTask('extensions', renderExtensions);
 }
 
+function scheduleTranslatePanelRender() {
+  if (activePanel !== panelTranslate) return;
+  scheduleUiTask('translate-panel', renderTranslatePanel);
+}
+
 function syncBrowserVisibility() {
   if (activePanel || permissionRequestState) {
     window.ag.hideActiveView();
@@ -235,10 +310,16 @@ function applyLang(lang) {
   currentLang = normalizeLang(lang);
   selectLanguage.value = currentLang;
   applyI18n();
+  if (!settings.translateTargetLang) {
+    settings.translateTargetLang = currentLang;
+  }
+  selectTranslateLanguage.value = getTranslateTargetValue();
   // Re-render panels that may be open
   renderDownloads();
   renderExtensions();
   renderTabs();
+  renderTranslatePanel();
+  updateToolbarState();
 }
 
 btnThemeDark.onclick = async () => {
@@ -351,9 +432,19 @@ function showTabContextMenu(x, y, tab) {
 
 /* ===== Toolbar ===== */
 function updateToolbarState() {
-  const tab = tabs.find(x => x.id === activeId);
+  const tab = getActiveTab();
   btnBack.disabled = !(tab && tab.canGoBack);
   btnFwd.disabled = !(tab && tab.canGoForward);
+  btnReadMode.disabled = !isReadModeAvailable(tab);
+  btnReadMode.classList.toggle('active', !!tab?.readModeEnabled);
+  btnReadMode.setAttribute('aria-pressed', String(!!tab?.readModeEnabled));
+  btnReadMode.title = tab?.readModeEnabled ? t('exitReadMode') : t('readMode');
+  btnReadMode.setAttribute('aria-label', btnReadMode.title);
+  btnTranslate.disabled = !isTranslatableTab(tab);
+  btnTranslate.classList.toggle('active', !!tab?.translatedTo);
+  btnTranslate.setAttribute('aria-pressed', String(!!tab?.translatedTo));
+  btnTranslate.title = t('translatePage');
+  btnTranslate.setAttribute('aria-label', btnTranslate.title);
   if (document.activeElement !== address) {
     address.value = tab ? tab.url : '';
   }
@@ -362,6 +453,22 @@ function updateToolbarState() {
 btnBack.onclick = () => window.ag.back();
 btnFwd.onclick = () => window.ag.forward();
 btnReload.onclick = () => window.ag.reload();
+btnReadMode.onclick = async () => {
+  const result = await window.ag.toggleReadMode();
+  if (!result?.success && result?.messageKey) {
+    showToast(t(result.messageKey));
+  }
+};
+btnTranslate.onclick = async () => {
+  if (activePanel === panelTranslate) { hideAllPanels(); return; }
+  settings = await window.ag.settingsGet();
+  if (!settings.translateTargetLang) {
+    settings.translateTargetLang = settings.lang || currentLang || DEFAULT_LANG;
+  }
+  selectTranslateLanguage.value = getTranslateTargetValue();
+  renderTranslatePanel();
+  showPanel(panelTranslate);
+};
 btnNew.onclick = () => window.ag.createTab(settings.homepage || '');
 btnMinimizeWindow.onclick = () => window.ag.windowMinimize();
 btnToggleMaximizeWindow.onclick = async () => {
@@ -379,14 +486,50 @@ address.addEventListener('keydown', (e) => {
 });
 address.addEventListener('focus', () => address.select());
 address.addEventListener('blur', () => {
-  const tab = tabs.find(x => x.id === activeId);
+  const tab = getActiveTab();
   if (tab) address.value = tab.url;
 });
+
+function renderTranslatePanel() {
+  const tab = getActiveTab();
+  const targetLang = getTranslateTargetValue();
+  selectTranslateLanguage.value = targetLang;
+
+  if (!tab) {
+    translateStatus.textContent = t('translateUnavailable');
+    translatePageUrl.textContent = '';
+    btnTranslateApply.disabled = true;
+    btnTranslateRestore.disabled = true;
+    return;
+  }
+
+  const sourceUrl = tab.translationOriginalUrl || tab.url || '';
+  translatePageUrl.textContent = sourceUrl;
+  btnTranslateApply.disabled = !isTranslatableTab(tab);
+  btnTranslateRestore.disabled = !tab.translationOriginalUrl;
+
+  if (!isTranslatableTab(tab)) {
+    translateStatus.textContent = t('translateUnavailable');
+    return;
+  }
+
+  if (tab.translatedTo) {
+    translateStatus.textContent = formatUiString(t('translateStatusActive'), {
+      language: getLanguageLabel(tab.translatedTo)
+    });
+    return;
+  }
+
+  translateStatus.textContent = formatUiString(t('translateStatusReady'), {
+    language: getLanguageLabel(targetLang)
+  });
+}
 
 /* ===== Panels ===== */
 function hidePanelsOnly() {
   panelDownloads.classList.add('hidden');
   panelExtensions.classList.add('hidden');
+  panelTranslate.classList.add('hidden');
   panelSettings.classList.add('hidden');
   panelOverlay.classList.add('hidden');
   activePanel = null;
@@ -429,6 +572,31 @@ btnImportExt.onclick = async () => {
 btnImportZip.onclick = async () => {
   const result = await window.ag.extImportZip();
   if (result?.success) { exts = await window.ag.extList(); renderExtensions(); }
+};
+
+btnCloseTranslate.onclick = () => hideAllPanels();
+selectTranslateLanguage.onchange = async () => {
+  const translateTargetLang = normalizeLang(selectTranslateLanguage.value);
+  settings = await window.ag.settingsSet({ translateTargetLang });
+  renderTranslatePanel();
+};
+btnTranslateApply.onclick = async () => {
+  const translateTargetLang = normalizeLang(selectTranslateLanguage.value);
+  settings = await window.ag.settingsSet({ translateTargetLang });
+  hideAllPanels();
+  const result = await window.ag.translatePage(translateTargetLang);
+  if (!result?.success) {
+    showToast(t(result?.messageKey || 'translateUnavailable'));
+    return;
+  }
+};
+btnTranslateRestore.onclick = async () => {
+  hideAllPanels();
+  const result = await window.ag.restoreOriginalPage();
+  if (!result?.success) {
+    showToast(t(result?.messageKey || 'translateUnavailable'));
+    return;
+  }
 };
 
 btnSettings.onclick = async () => {
@@ -649,11 +817,13 @@ window.ag.onTabsList((list, active) => {
   activeId = active;
   scheduleTabsRender();
   scheduleToolbarUpdate();
+  scheduleTranslatePanelRender();
 });
 window.ag.onActiveChanged((id) => {
   activeId = id;
   scheduleTabsRender();
   scheduleToolbarUpdate();
+  scheduleTranslatePanelRender();
 });
 window.ag.onTabUpdated((tab) => {
   const i = tabs.findIndex(t => t.id === tab.id);
@@ -663,6 +833,7 @@ window.ag.onTabUpdated((tab) => {
   }
   scheduleTabsRender();
   scheduleToolbarUpdate();
+  scheduleTranslatePanelRender();
 });
 window.ag.onDlCreated((d) => {
   dls.push(d);
@@ -721,7 +892,10 @@ document.addEventListener('keydown', (e) => { if (e.key === 'F11') { e.preventDe
 
   settings = await window.ag.settingsGet();
   applyTheme(settings.theme || 'dark');
+  settings.translateTargetLang = normalizeLang(settings.translateTargetLang || settings.lang || DEFAULT_LANG);
   applyLang(settings.lang || DEFAULT_LANG);
+  selectTranslateLanguage.value = getTranslateTargetValue();
+  renderTranslatePanel();
 
   exts = await window.ag.extList();
   renderExtensions();

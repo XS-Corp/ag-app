@@ -12,14 +12,25 @@ const {
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
 const { fileURLToPath, pathToFileURL } = require('url');
 const AdmZip = require('adm-zip');
-const { DEFAULT_LANG, getMenuStrings, getUiStrings, normalizeLang } = require('./i18n');
+const {
+  DEFAULT_LANG,
+  LANGUAGES,
+  getLangConfig,
+  getMenuStrings,
+  getTranslationLangCode,
+  getUiStrings,
+  normalizeLang
+} = require('./i18n');
 
 const APP_ROOT = __dirname;
 const DEFAULT_HOMEPAGE = 'https://search.kickedstorm.com/';
 const EMPTY_EXT_THEME = '/* no extension theme active */\n';
 const SEARCH_FALLBACK_PREFIX = 'https://www.google.com/search?q=';
+const GOOGLE_TRANSLATE_API_URL = 'https://translate.googleapis.com/translate_a/t';
+const GOOGLE_TRANSLATE_BATCH_LIMIT = 6000;
 const SAFE_BROWSER_PROTOCOLS = new Set(['http:', 'https:']);
 const SAFE_VIEW_EXTERNAL_PROTOCOLS = new Set(['mailto:', 'tel:']);
 const SAFE_UI_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:']);
@@ -45,6 +56,9 @@ const PROMPTED_PERMISSIONS = new Set([
   'window-management',
   'keyboardLock'
 ]);
+const TRANSLATION_CODE_TO_LANG = new Map(
+  LANGUAGES.map((lang) => [getTranslationLangCode(lang.code), lang.code])
+);
 
 let win;
 let tabs = [];
@@ -201,6 +215,760 @@ function formatString(template, replacements = {}) {
     const value = replacements[key];
     return value == null ? '' : String(value);
   });
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function decodeHtmlEntities(value) {
+  return String(value || '').replace(/&(#x?[0-9a-f]+|amp|lt|gt|quot|apos|#39);/gi, (match, entity) => {
+    const normalized = String(entity || '').toLowerCase();
+    switch (normalized) {
+      case 'amp':
+        return '&';
+      case 'lt':
+        return '<';
+      case 'gt':
+        return '>';
+      case 'quot':
+        return '"';
+      case 'apos':
+      case '#39':
+        return "'";
+      default:
+        break;
+    }
+
+    if (normalized.startsWith('#x')) {
+      const codePoint = Number.parseInt(normalized.slice(2), 16);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match;
+    }
+    if (normalized.startsWith('#')) {
+      const codePoint = Number.parseInt(normalized.slice(1), 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match;
+    }
+    return match;
+  });
+}
+
+function stripHashFromUrl(rawUrl) {
+  const parsed = safeParseUrl(rawUrl);
+  if (!parsed) return String(rawUrl || '');
+  parsed.hash = '';
+  return parsed.toString();
+}
+
+function getComparableBrowserUrl(rawUrl) {
+  const resolved = resolveBrowserUrl(rawUrl, {
+    fallbackUrl: '',
+    allowSearchFallback: false
+  });
+  if (!isSafeBrowserUrl(resolved)) return '';
+  return stripHashFromUrl(resolved);
+}
+
+function isSameComparableBrowserUrl(left, right) {
+  const normalizedLeft = getComparableBrowserUrl(left);
+  const normalizedRight = getComparableBrowserUrl(right);
+  return !!normalizedLeft && normalizedLeft === normalizedRight;
+}
+
+function getUiLangFromTranslationCode(code) {
+  if (!code) return DEFAULT_LANG;
+  return TRANSLATION_CODE_TO_LANG.get(code) || normalizeLang(code);
+}
+
+function getTranslationStateFromUrl(rawUrl) {
+  const parsed = safeParseUrl(rawUrl);
+  if (!parsed || parsed.pathname !== '/translate' || !/^translate\.google\./i.test(parsed.hostname)) {
+    return null;
+  }
+
+  const originalUrl = parsed.searchParams.get('u');
+  const targetCode = parsed.searchParams.get('tl');
+  if (!originalUrl || !targetCode) return null;
+
+  const normalizedOriginalUrl = resolveBrowserUrl(originalUrl, {
+    fallbackUrl: '',
+    allowSearchFallback: false
+  });
+  if (!isSafeBrowserUrl(normalizedOriginalUrl)) return null;
+
+  return {
+    originalUrl: normalizedOriginalUrl,
+    targetLang: getUiLangFromTranslationCode(targetCode)
+  };
+}
+
+function normalizeTranslationText(value) {
+  return String(value || '').replace(/\r\n/g, '\n');
+}
+
+function decodeTranslatedText(value) {
+  return decodeHtmlEntities(
+    String(value || '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/?[^>]+>/g, '')
+  );
+}
+
+function parseTranslatedBatchHtml(translatedHtml, expectedCount) {
+  const translatedItems = new Array(expectedCount).fill('');
+  const matcher = /<span\b[^>]*\bdata-ag-index=(["']?)(\d+)\1[^>]*>([\s\S]*?)<\/span>/gi;
+  let match;
+  while ((match = matcher.exec(String(translatedHtml || '')))) {
+    const index = Number.parseInt(match[2], 10);
+    if (!Number.isInteger(index) || index < 0 || index >= expectedCount) continue;
+    translatedItems[index] = decodeTranslatedText(match[3]);
+  }
+  return translatedItems;
+}
+
+function requestGoogleTranslationBatch(html, targetCode) {
+  return new Promise((resolve, reject) => {
+    const url = `${GOOGLE_TRANSLATE_API_URL}?client=gtx&sl=auto&tl=${encodeURIComponent(targetCode)}&dj=1&source=input`;
+    const body = new URLSearchParams({ q: html }).toString();
+    const req = https.request(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'Content-Length': Buffer.byteLength(body),
+        'User-Agent': 'AG Browser'
+      }
+    }, (res) => {
+      let responseText = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        responseText += chunk;
+      });
+      res.on('end', () => {
+        if (res.statusCode && res.statusCode >= 400) {
+          reject(new Error(`Google Translate request failed with status ${res.statusCode}`));
+          return;
+        }
+
+        try {
+          const payload = JSON.parse(responseText);
+          const translatedHtml = Array.isArray(payload?.[0]) ? payload[0][0] : '';
+          if (typeof translatedHtml !== 'string') {
+            reject(new Error('Google Translate returned an unexpected payload'));
+            return;
+          }
+          resolve(translatedHtml);
+        } catch (error) {
+          reject(new Error(`Google Translate response parse failed: ${error.message}`));
+        }
+      });
+    });
+
+    req.on('error', (error) => {
+      reject(error);
+    });
+    req.write(body);
+    req.end();
+  });
+}
+
+async function translateTextsWithGoogle(texts, lang) {
+  const targetCode = getTranslationLangCode(lang);
+  const normalizedTexts = texts.map((text) => normalizeTranslationText(text));
+  const uniqueTexts = [];
+  const uniqueIndexByText = new Map();
+  const indexes = normalizedTexts.map((text) => {
+    if (!text) return -1;
+    if (uniqueIndexByText.has(text)) return uniqueIndexByText.get(text);
+    const index = uniqueTexts.length;
+    uniqueIndexByText.set(text, index);
+    uniqueTexts.push(text);
+    return index;
+  });
+  const uniqueTranslations = new Array(uniqueTexts.length).fill('');
+
+  let cursor = 0;
+  while (cursor < uniqueTexts.length) {
+    const batch = [];
+    let encodedLength = 0;
+
+    while (cursor < uniqueTexts.length) {
+      const batchIndex = batch.length;
+      const text = uniqueTexts[cursor];
+      const fragment = `<span data-ag-index="${batchIndex}">${escapeHtml(text)}</span>`;
+      const fragmentLength = encodeURIComponent(fragment).length;
+      if (batch.length > 0 && encodedLength + fragmentLength > GOOGLE_TRANSLATE_BATCH_LIMIT) {
+        break;
+      }
+      batch.push({
+        uniqueIndex: cursor,
+        fragment,
+        text
+      });
+      encodedLength += fragmentLength;
+      cursor += 1;
+    }
+
+    const translatedHtml = await requestGoogleTranslationBatch(
+      batch.map((item) => item.fragment).join(''),
+      targetCode
+    );
+    const translatedBatch = parseTranslatedBatchHtml(translatedHtml, batch.length);
+
+    batch.forEach((item, index) => {
+      uniqueTranslations[item.uniqueIndex] = translatedBatch[index] || item.text;
+    });
+  }
+
+  return indexes.map((index, originalIndex) => {
+    if (index === -1) return normalizedTexts[originalIndex];
+    return uniqueTranslations[index] || normalizedTexts[originalIndex];
+  });
+}
+
+function buildPrepareTranslationScript() {
+  return `
+    (() => {
+      const STATE_KEY = '__ag_translate_state__';
+      const PAGE_KEY = location.origin + location.pathname + location.search;
+      const BLOCKED_SELECTOR = 'script,style,noscript,iframe,canvas,svg,code,pre,kbd,samp,[translate="no"],.notranslate,.skiptranslate';
+      const ATTRIBUTE_SELECTOR = '[placeholder],[title],[aria-label],[alt],input[type="button"],input[type="submit"],input[type="reset"]';
+      const LETTER_RE = /[\\p{L}]/u;
+
+      const trimEdges = (value) => {
+        const source = String(value || '');
+        const match = source.match(/^(\\s*)([\\s\\S]*?)(\\s*)$/);
+        return {
+          leading: match ? match[1] : '',
+          core: match ? match[2] : source,
+          trailing: match ? match[3] : ''
+        };
+      };
+
+      const isVisibleElement = (element) => {
+        if (!element) return false;
+        const style = window.getComputedStyle(element);
+        return style.display !== 'none' && style.visibility !== 'hidden';
+      };
+
+      const hasTranslatableText = (value) => LETTER_RE.test(String(value || ''));
+
+      const existingState = window[STATE_KEY];
+      if (existingState && existingState.pageKey === PAGE_KEY && Array.isArray(existingState.entries) && existingState.entries.length) {
+        return {
+          ok: true,
+          reused: true,
+          texts: existingState.entries.map((entry) => entry.original)
+        };
+      }
+
+      const root = document.body || document.documentElement;
+      if (!root) {
+        return { ok: false, reason: 'no-root' };
+      }
+
+      const entries = [];
+      const addEntry = (entry) => {
+        if (!entry || !entry.original || !hasTranslatableText(entry.original)) return;
+        entries.push(entry);
+      };
+
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          const parent = node.parentElement;
+          if (!parent || parent.closest(BLOCKED_SELECTOR)) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          if (!isVisibleElement(parent)) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          const parts = trimEdges(node.nodeValue || '');
+          if (!parts.core || !hasTranslatableText(parts.core)) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+
+      let currentNode = walker.nextNode();
+      while (currentNode) {
+        const parts = trimEdges(currentNode.nodeValue || '');
+        addEntry({
+          type: 'text',
+          node: currentNode,
+          original: parts.core,
+          leading: parts.leading,
+          trailing: parts.trailing
+        });
+        currentNode = walker.nextNode();
+      }
+
+      Array.from(root.querySelectorAll(ATTRIBUTE_SELECTOR)).forEach((element) => {
+        if (!isVisibleElement(element) || element.closest(BLOCKED_SELECTOR)) {
+          return;
+        }
+
+        ['placeholder', 'title', 'aria-label', 'alt'].forEach((attrName) => {
+          if (!element.hasAttribute(attrName)) return;
+          const parts = trimEdges(element.getAttribute(attrName) || '');
+          addEntry({
+            type: 'attr',
+            element,
+            attrName,
+            original: parts.core,
+            leading: parts.leading,
+            trailing: parts.trailing
+          });
+        });
+
+        if (element.matches('input[type="button"],input[type="submit"],input[type="reset"]')) {
+          const parts = trimEdges(element.value || '');
+          addEntry({
+            type: 'value',
+            element,
+            original: parts.core,
+            leading: parts.leading,
+            trailing: parts.trailing
+          });
+        }
+      });
+
+      const titleText = String(document.title || '').trim();
+      if (hasTranslatableText(titleText)) {
+        addEntry({
+          type: 'title',
+          original: titleText,
+          leading: '',
+          trailing: ''
+        });
+      }
+
+      window[STATE_KEY] = {
+        pageKey: PAGE_KEY,
+        originalLang: document.documentElement.getAttribute('lang') || '',
+        appliedLang: '',
+        entries
+      };
+
+      return {
+        ok: entries.length > 0,
+        texts: entries.map((entry) => entry.original)
+      };
+    })();
+  `;
+}
+
+function buildApplyTranslationScript(translations, lang) {
+  const serializedTranslations = JSON.stringify(translations);
+  const targetDocumentLang = JSON.stringify(getLangConfig(lang).htmlLang || lang);
+
+  return `
+    (() => {
+      const state = window.__ag_translate_state__;
+      if (!state || !Array.isArray(state.entries) || !state.entries.length) {
+        return { ok: false, reason: 'missing-state' };
+      }
+
+      const translations = ${serializedTranslations};
+      let applied = 0;
+
+      const withWhitespace = (entry, value) => \`\${entry.leading || ''}\${value}\${entry.trailing || ''}\`;
+
+      state.entries.forEach((entry, index) => {
+        const translated = typeof translations[index] === 'string' ? translations[index] : entry.original;
+        const nextValue = withWhitespace(entry, translated || entry.original);
+
+        if (entry.type === 'text') {
+          if (entry.node && entry.node.isConnected) {
+            entry.node.nodeValue = nextValue;
+            applied += 1;
+          }
+          return;
+        }
+
+        if (entry.type === 'attr') {
+          if (entry.element && entry.element.isConnected) {
+            entry.element.setAttribute(entry.attrName, nextValue);
+            try {
+              entry.element[entry.attrName] = nextValue;
+            } catch {}
+            applied += 1;
+          }
+          return;
+        }
+
+        if (entry.type === 'value') {
+          if (entry.element && entry.element.isConnected) {
+            entry.element.value = nextValue;
+            entry.element.setAttribute('value', nextValue);
+            applied += 1;
+          }
+          return;
+        }
+
+        if (entry.type === 'title') {
+          document.title = translated || entry.original;
+          applied += 1;
+        }
+      });
+
+      document.documentElement.setAttribute('lang', ${targetDocumentLang});
+      state.appliedLang = ${JSON.stringify(lang)};
+      return { ok: applied > 0, applied };
+    })();
+  `;
+}
+
+function buildRestoreTranslationScript() {
+  return `
+    (() => {
+      const state = window.__ag_translate_state__;
+      if (!state || !Array.isArray(state.entries) || !state.entries.length) {
+        return { ok: false, reason: 'missing-state' };
+      }
+
+      let restored = 0;
+      const withWhitespace = (entry, value) => \`\${entry.leading || ''}\${value}\${entry.trailing || ''}\`;
+
+      state.entries.forEach((entry) => {
+        const nextValue = withWhitespace(entry, entry.original || '');
+
+        if (entry.type === 'text') {
+          if (entry.node && entry.node.isConnected) {
+            entry.node.nodeValue = nextValue;
+            restored += 1;
+          }
+          return;
+        }
+
+        if (entry.type === 'attr') {
+          if (entry.element && entry.element.isConnected) {
+            entry.element.setAttribute(entry.attrName, nextValue);
+            try {
+              entry.element[entry.attrName] = nextValue;
+            } catch {}
+            restored += 1;
+          }
+          return;
+        }
+
+        if (entry.type === 'value') {
+          if (entry.element && entry.element.isConnected) {
+            entry.element.value = nextValue;
+            entry.element.setAttribute('value', nextValue);
+            restored += 1;
+          }
+          return;
+        }
+
+        if (entry.type === 'title') {
+          document.title = entry.original || document.title;
+          restored += 1;
+        }
+      });
+
+      if (state.originalLang) {
+        document.documentElement.setAttribute('lang', state.originalLang);
+      } else {
+        document.documentElement.removeAttribute('lang');
+      }
+      state.appliedLang = '';
+      return { ok: restored > 0, restored };
+    })();
+  `;
+}
+
+function buildEnableReadModeScript() {
+  return `
+    (() => {
+      const ROOT_ID = '__ag_reader_root__';
+      const STYLE_ID = '__ag_reader_style__';
+      const rootExists = document.getElementById(ROOT_ID);
+      if (rootExists) {
+        return { ok: true, alreadyOpen: true };
+      }
+
+      if (!document.body) {
+        return { ok: false, reason: 'no-body' };
+      }
+
+      const blockedSelectors = 'script,style,noscript,iframe,canvas,svg,nav,aside,form,button,input,select,textarea,footer,[role="navigation"],[aria-hidden="true"],[hidden],[translate="no"],.notranslate,.skiptranslate';
+      const contentHintRe = /(article|content|post|entry|story|main|body|text|read)/i;
+
+      const getTextLength = (node) => (node?.innerText || node?.textContent || '').replace(/\\s+/g, ' ').trim().length;
+      const getParagraphCount = (node) => node ? node.querySelectorAll('p').length : 0;
+      const getLinkDensity = (node) => {
+        const textLength = getTextLength(node);
+        if (!textLength) return 1;
+        const linkText = Array.from(node.querySelectorAll('a')).reduce((total, link) => total + getTextLength(link), 0);
+        return linkText / textLength;
+      };
+      const isVisible = (node) => {
+        if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+        const style = window.getComputedStyle(node);
+        return style.display !== 'none' && style.visibility !== 'hidden';
+      };
+
+      const scoreNode = (node) => {
+        if (!node || !isVisible(node) || node.matches(blockedSelectors)) return 0;
+        const textLength = getTextLength(node);
+        if (textLength < 180) return 0;
+
+        const paragraphCount = getParagraphCount(node);
+        const headingCount = node.querySelectorAll('h1, h2, h3, h4').length;
+        const imageCount = node.querySelectorAll('img, video, figure').length;
+        const listCount = node.querySelectorAll('ul, ol').length;
+        const interactiveCount = node.querySelectorAll('nav,aside,form,button,input,select,textarea').length;
+        const linkDensity = getLinkDensity(node);
+        const hintText = [node.id, node.className].filter(Boolean).join(' ');
+        const hintBoost = contentHintRe.test(hintText) ? 420 : 0;
+        const tagBoost = node.matches('article') ? 900 : node.matches('main, [role="main"]') ? 700 : node.matches('section') ? 260 : 0;
+
+        return textLength +
+          (paragraphCount * 150) +
+          (headingCount * 80) +
+          (imageCount * 22) +
+          (listCount * 30) +
+          hintBoost +
+          tagBoost -
+          (interactiveCount * 75) -
+          (linkDensity * 1350);
+      };
+
+      const candidateSet = new Set([
+        document.querySelector('article'),
+        document.querySelector('main'),
+        document.querySelector('[role="main"]'),
+        document.body
+      ]);
+      document.querySelectorAll('article, main, [role="main"], section, div').forEach((node) => {
+        candidateSet.add(node);
+      });
+
+      let bestNode = null;
+      let bestScore = 0;
+
+      for (const node of candidateSet) {
+        const score = scoreNode(node);
+        if (score > bestScore) {
+          bestScore = score;
+          bestNode = node;
+        }
+      }
+
+      if (!bestNode) {
+        return { ok: false, reason: 'no-content' };
+      }
+
+      const clone = bestNode.cloneNode(true);
+      clone.querySelectorAll(blockedSelectors).forEach((node) => node.remove());
+      clone.querySelectorAll('*').forEach((node) => {
+        for (const attr of Array.from(node.attributes)) {
+          if (/^(src|href|alt|title|colspan|rowspan|target|rel|controls|poster)$/i.test(attr.name)) continue;
+          node.removeAttribute(attr.name);
+        }
+
+        if (node.matches('a')) {
+          node.setAttribute('target', '_blank');
+          node.setAttribute('rel', 'noreferrer noopener');
+        }
+
+        const textLength = getTextLength(node);
+        if (node.matches('div, section, article') && textLength < 40 && !node.querySelector('img, video, pre, code, ul, ol, table, blockquote')) {
+          node.remove();
+          return;
+        }
+
+        if (getLinkDensity(node) > 0.55 && textLength < 1200 && !node.matches('a')) {
+          node.remove();
+        }
+      });
+
+      const articleTextLength = getTextLength(clone);
+      if (articleTextLength < 350) {
+        return { ok: false, reason: 'too-short' };
+      }
+
+      const style = document.createElement('style');
+      style.id = STYLE_ID;
+      style.textContent = \`
+        #\${ROOT_ID} {
+          position: fixed;
+          inset: 0;
+          z-index: 2147483646;
+          overflow-y: auto;
+          background:
+            linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0)),
+            rgba(17, 24, 39, 0.94);
+          color: #f8fafc;
+          padding: 56px 24px 72px;
+          box-sizing: border-box;
+          font-family: Georgia, "Times New Roman", serif;
+        }
+
+        #\${ROOT_ID} * {
+          box-sizing: border-box;
+        }
+
+        #\${ROOT_ID} .ag-reader-shell {
+          width: min(900px, 100%);
+          margin: 0 auto;
+          background: rgba(15, 23, 42, 0.82);
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 26px;
+          padding: 40px min(7vw, 56px);
+          box-shadow: 0 24px 80px rgba(0,0,0,0.45);
+          backdrop-filter: blur(20px);
+        }
+
+        #\${ROOT_ID} .ag-reader-title {
+          margin: 0;
+          font-size: clamp(30px, 4vw, 50px);
+          line-height: 1.06;
+          letter-spacing: -0.04em;
+          color: #fff;
+        }
+
+        #\${ROOT_ID} .ag-reader-meta {
+          margin-top: 12px;
+          margin-bottom: 28px;
+          color: rgba(226,232,240,0.72);
+          font: 600 12px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+        }
+
+        #\${ROOT_ID} .ag-reader-content {
+          font-size: clamp(18px, 2vw, 21px);
+          line-height: 1.82;
+          color: rgba(248,250,252,0.95);
+        }
+
+        #\${ROOT_ID} .ag-reader-content h1,
+        #\${ROOT_ID} .ag-reader-content h2,
+        #\${ROOT_ID} .ag-reader-content h3,
+        #\${ROOT_ID} .ag-reader-content h4 {
+          margin: 1.8em 0 0.7em;
+          line-height: 1.18;
+          color: #fff;
+        }
+
+        #\${ROOT_ID} .ag-reader-content p,
+        #\${ROOT_ID} .ag-reader-content ul,
+        #\${ROOT_ID} .ag-reader-content ol,
+        #\${ROOT_ID} .ag-reader-content blockquote,
+        #\${ROOT_ID} .ag-reader-content pre,
+        #\${ROOT_ID} .ag-reader-content figure {
+          margin: 0 0 1.1em;
+        }
+
+        #\${ROOT_ID} .ag-reader-content a {
+          color: #93c5fd;
+        }
+
+        #\${ROOT_ID} .ag-reader-content img,
+        #\${ROOT_ID} .ag-reader-content video {
+          max-width: 100%;
+          height: auto;
+          display: block;
+          margin: 1.4em auto;
+          border-radius: 18px;
+        }
+
+        #\${ROOT_ID} .ag-reader-content blockquote {
+          padding: 0.2em 0 0.2em 1em;
+          border-left: 3px solid rgba(147,197,253,0.55);
+          color: rgba(226,232,240,0.88);
+        }
+
+        #\${ROOT_ID} .ag-reader-content pre,
+        #\${ROOT_ID} .ag-reader-content code {
+          font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        }
+
+        #\${ROOT_ID} .ag-reader-content pre {
+          padding: 16px 18px;
+          overflow-x: auto;
+          border-radius: 16px;
+          background: rgba(15,23,42,0.88);
+        }
+
+        @media (max-width: 720px) {
+          #\${ROOT_ID} {
+            padding: 18px 12px 32px;
+          }
+
+          #\${ROOT_ID} .ag-reader-shell {
+            border-radius: 20px;
+            padding: 24px 18px 28px;
+          }
+
+          #\${ROOT_ID} .ag-reader-content {
+            font-size: 18px;
+            line-height: 1.72;
+          }
+        }
+      \`;
+
+      const root = document.createElement('div');
+      root.id = ROOT_ID;
+      root.dataset.previousDocumentOverflow = document.documentElement.style.overflow || '';
+      root.dataset.previousBodyOverflow = document.body.style.overflow || '';
+
+      const titleNode = document.createElement('h1');
+      titleNode.className = 'ag-reader-title';
+      titleNode.textContent = (
+        bestNode.querySelector('h1, h2')?.innerText ||
+        document.querySelector('h1')?.innerText ||
+        document.title ||
+        location.hostname ||
+        ''
+      ).trim();
+
+      const metaNode = document.createElement('div');
+      metaNode.className = 'ag-reader-meta';
+      metaNode.textContent = location.hostname;
+
+      const contentNode = document.createElement('div');
+      contentNode.className = 'ag-reader-content';
+      contentNode.appendChild(clone);
+
+      const shellNode = document.createElement('div');
+      shellNode.className = 'ag-reader-shell';
+      shellNode.appendChild(titleNode);
+      shellNode.appendChild(metaNode);
+      shellNode.appendChild(contentNode);
+      root.appendChild(shellNode);
+
+      document.documentElement.style.overflow = 'hidden';
+      document.body.style.overflow = 'hidden';
+      document.documentElement.appendChild(style);
+      document.documentElement.appendChild(root);
+
+      return { ok: true };
+    })();
+  `;
+}
+
+function getDisableReadModeScript() {
+  return `
+    (() => {
+      const root = document.getElementById('__ag_reader_root__');
+      const style = document.getElementById('__ag_reader_style__');
+      if (root) {
+        document.documentElement.style.overflow = root.dataset.previousDocumentOverflow || '';
+        if (document.body) {
+          document.body.style.overflow = root.dataset.previousBodyOverflow || '';
+        }
+        root.remove();
+      }
+      if (style) style.remove();
+      return { ok: true };
+    })();
+  `;
 }
 
 function getCurrentUiStrings() {
@@ -746,6 +1514,208 @@ function loadSafeUrl(webContents, rawUrl, options) {
   });
 }
 
+function clearTabTranslationState(tab) {
+  if (!tab) return;
+  tab.translationOriginalUrl = '';
+  tab.translatedTo = '';
+  tab.translationMode = '';
+}
+
+function syncDerivedTabState(tab) {
+  const translationState = getTranslationStateFromUrl(tab.url);
+  if (translationState) {
+    tab.translationOriginalUrl = translationState.originalUrl;
+    tab.translatedTo = translationState.targetLang;
+    tab.translationMode = 'proxy';
+    return;
+  }
+
+  if (tab.translationMode === 'in-page' && isSameComparableBrowserUrl(tab.url, tab.translationOriginalUrl)) {
+    return;
+  }
+
+  clearTabTranslationState(tab);
+}
+
+function canUseReadMode(tab) {
+  return !!tab && isSafeBrowserUrl(tab.url);
+}
+
+async function applyReadModeToTab(tab, { persist = false } = {}) {
+  if (!canUseReadMode(tab)) {
+    if (persist && tab) {
+      tab.readModeEnabled = false;
+      emitTabUpdate(tab);
+    }
+    return { success: false, messageKey: 'readModeUnavailable' };
+  }
+
+  try {
+    const result = await tab.view.webContents.executeJavaScript(buildEnableReadModeScript(), true);
+    if (!result?.ok) {
+      if (persist) {
+        tab.readModeEnabled = false;
+        emitTabUpdate(tab);
+      }
+      return { success: false, messageKey: 'readModeUnavailable' };
+    }
+
+    if (persist) {
+      tab.readModeEnabled = true;
+      emitTabUpdate(tab);
+    }
+    return { success: true };
+  } catch (error) {
+    if (persist) {
+      tab.readModeEnabled = false;
+      emitTabUpdate(tab);
+    }
+    console.warn('Failed to enable read mode:', error.message);
+    return { success: false, messageKey: 'readModeUnavailable' };
+  }
+}
+
+async function disableReadModeForTab(tab, { persist = false } = {}) {
+  if (!tab) return { success: false, messageKey: 'readModeUnavailable' };
+
+  try {
+    await tab.view.webContents.executeJavaScript(getDisableReadModeScript(), true);
+  } catch {
+    // Ignore cleanup failures during navigation or teardown.
+  }
+
+  if (persist) {
+    tab.readModeEnabled = false;
+    emitTabUpdate(tab);
+  }
+
+  return { success: true };
+}
+
+async function reapplyReadModeIfNeeded(tab) {
+  if (!tab?.readModeEnabled || tab.readModeSuspended) return;
+  if (!tab.view?.webContents || tab.view.webContents.isDestroyed()) return;
+
+  const result = await applyReadModeToTab(tab, { persist: false });
+  if (!result.success && tab.readModeEnabled) {
+    tab.readModeEnabled = false;
+    emitTabUpdate(tab);
+  }
+}
+
+async function withReadModeSuspended(tab, task) {
+  const shouldRestoreReadMode = !!tab?.readModeEnabled;
+  if (!shouldRestoreReadMode) {
+    return task();
+  }
+
+  tab.readModeSuspended = true;
+  await disableReadModeForTab(tab, { persist: false });
+
+  try {
+    return await task();
+  } finally {
+    tab.readModeSuspended = false;
+    await reapplyReadModeIfNeeded(tab);
+  }
+}
+
+async function toggleReadModeForTab(tab) {
+  if (!tab) return { success: false, messageKey: 'readModeUnavailable' };
+  if (tab.readModeEnabled) {
+    return disableReadModeForTab(tab, { persist: true });
+  }
+  return applyReadModeToTab(tab, { persist: true });
+}
+
+async function translateTab(tab, lang) {
+  if (!tab) return { success: false, messageKey: 'translateUnavailable' };
+
+  const targetLang = normalizeLang(lang);
+  const originalUrl = resolveBrowserUrl(tab.translationOriginalUrl || tab.url, {
+    fallbackUrl: '',
+    allowSearchFallback: false
+  });
+  if (!isSafeBrowserUrl(originalUrl)) {
+    return { success: false, messageKey: 'translateUnavailable' };
+  }
+
+  try {
+    return await withReadModeSuspended(tab, async () => {
+      if (getTranslationStateFromUrl(tab.url)) {
+        const loadedOriginal = await loadSafeUrl(tab.view.webContents, originalUrl, {
+          fallbackUrl: getHomepage(),
+          allowSearchFallback: false
+        });
+        if (loadedOriginal === false) {
+          return { success: false, messageKey: 'translateUnavailable' };
+        }
+        clearTabTranslationState(tab);
+      }
+
+      const prepared = await tab.view.webContents.executeJavaScript(buildPrepareTranslationScript(), true);
+      if (!prepared?.ok || !Array.isArray(prepared.texts) || !prepared.texts.length) {
+        return { success: false, messageKey: 'translateUnavailable' };
+      }
+
+      const translatedTexts = await translateTextsWithGoogle(prepared.texts, targetLang);
+      const applied = await tab.view.webContents.executeJavaScript(
+        buildApplyTranslationScript(translatedTexts, targetLang),
+        true
+      );
+      if (!applied?.ok) {
+        return { success: false, messageKey: 'translateUnavailable' };
+      }
+
+      tab.translationOriginalUrl = originalUrl;
+      tab.translatedTo = targetLang;
+      tab.translationMode = 'in-page';
+      emitTabUpdate(tab);
+      return { success: true, targetLang };
+    });
+  } catch (error) {
+    console.warn('Failed to translate page:', error.message);
+    return { success: false, messageKey: 'translateUnavailable' };
+  }
+}
+
+async function restoreOriginalTab(tab) {
+  if (!tab || !tab.translationOriginalUrl) {
+    return { success: false, messageKey: 'translateUnavailable' };
+  }
+
+  const originalUrl = tab.translationOriginalUrl;
+
+  try {
+    return await withReadModeSuspended(tab, async () => {
+      if (tab.translationMode === 'in-page') {
+        const restored = await tab.view.webContents.executeJavaScript(buildRestoreTranslationScript(), true)
+          .catch(() => null);
+        if (restored?.ok) {
+          clearTabTranslationState(tab);
+          emitTabUpdate(tab);
+          return { success: true };
+        }
+      }
+
+      const loaded = await loadSafeUrl(tab.view.webContents, originalUrl, {
+        fallbackUrl: getHomepage(),
+        allowSearchFallback: false
+      });
+      if (loaded === false) {
+        return { success: false, messageKey: 'translateUnavailable' };
+      }
+
+      clearTabTranslationState(tab);
+      emitTabUpdate(tab);
+      return { success: true };
+    });
+  } catch (error) {
+    console.warn('Failed to restore original page:', error.message);
+    return { success: false, messageKey: 'translateUnavailable' };
+  }
+}
+
 function sameTabState(a, b) {
   return !!a && !!b &&
     a.id === b.id &&
@@ -755,7 +1725,10 @@ function sameTabState(a, b) {
     a.canGoForward === b.canGoForward &&
     a.pinned === b.pinned &&
     a.favicon === b.favicon &&
-    a.loading === b.loading;
+    a.loading === b.loading &&
+    a.readModeEnabled === b.readModeEnabled &&
+    a.translatedTo === b.translatedTo &&
+    a.translationOriginalUrl === b.translationOriginalUrl;
 }
 
 function emitTabUpdate(tab) {
@@ -869,6 +1842,7 @@ function loadStore() {
   if (!store.settings) store.settings = {};
   if (!store.settings.theme) store.settings.theme = 'dark';
   store.settings.lang = normalizeLang(store.settings.lang || DEFAULT_LANG);
+  store.settings.translateTargetLang = normalizeLang(store.settings.translateTargetLang || store.settings.lang || DEFAULT_LANG);
   if (!store.settings.homepage) store.settings.homepage = DEFAULT_HOMEPAGE;
   if (!store.extensions) store.extensions = {};
   if (!store.pinnedTabs) store.pinnedTabs = [];
@@ -1284,8 +2258,14 @@ function createTab(url, pinned = false) {
     canGoForward: false,
     pinned,
     favicon: null,
-    loading: true
+    loading: true,
+    readModeEnabled: false,
+    readModeSuspended: false,
+    translatedTo: '',
+    translationOriginalUrl: '',
+    translationMode: ''
   };
+  syncDerivedTabState(tab);
   tabs.push(tab);
 
   const updateState = () => {
@@ -1293,6 +2273,7 @@ function createTab(url, pinned = false) {
     tab.title = view.webContents.getTitle() || tab.url || 'New Tab';
     tab.canGoBack = view.webContents.canGoBack();
     tab.canGoForward = view.webContents.canGoForward();
+    syncDerivedTabState(tab);
     try {
       tab.favicon = view.webContents.getURL().split('/').slice(0, 3).join('/') + '/favicon.ico';
     } catch { tab.favicon = null; }
@@ -1311,7 +2292,28 @@ function createTab(url, pinned = false) {
   view.webContents.on('page-title-updated', updateState);
   view.webContents.on('did-navigate', updateState);
   view.webContents.on('did-navigate-in-page', updateState);
-  view.webContents.on('did-finish-load', updateState);
+  view.webContents.on('did-finish-load', () => {
+    updateState();
+    if (tab.translatedTo && tab.translationMode === 'in-page' && isSameComparableBrowserUrl(tab.url, tab.translationOriginalUrl)) {
+      void translateTab(tab, tab.translatedTo).then((result) => {
+        if (!result.success && tab.translatedTo) {
+          clearTabTranslationState(tab);
+          emitTabUpdate(tab);
+          void reapplyReadModeIfNeeded(tab);
+        }
+      }).catch((error) => {
+        console.warn('Failed to restore translated page after load:', error.message);
+        if (tab.translatedTo) {
+          clearTabTranslationState(tab);
+          emitTabUpdate(tab);
+        }
+        void reapplyReadModeIfNeeded(tab);
+      });
+      return;
+    }
+
+    void reapplyReadModeIfNeeded(tab);
+  });
   view.webContents.on('page-favicon-updated', (event, favicons) => {
     if (favicons?.length > 0) {
       tab.favicon = favicons[0];
@@ -1384,7 +2386,10 @@ function serializeTab(t) {
   return {
     id: t.id, url: t.url, title: t.title,
     canGoBack: t.canGoBack, canGoForward: t.canGoForward,
-    pinned: t.pinned, favicon: t.favicon, loading: t.loading
+    pinned: t.pinned, favicon: t.favicon, loading: t.loading,
+    readModeEnabled: !!t.readModeEnabled,
+    translatedTo: t.translatedTo || '',
+    translationOriginalUrl: t.translationOriginalUrl || ''
   };
 }
 
@@ -1569,6 +2574,15 @@ ipcMain.handle('nav:go', (_e, url) => {
 ipcMain.handle('nav:back', () => { const t = getActiveTab(); if (t?.view.webContents.canGoBack()) t.view.webContents.goBack(); });
 ipcMain.handle('nav:forward', () => { const t = getActiveTab(); if (t?.view.webContents.canGoForward()) t.view.webContents.goForward(); });
 ipcMain.handle('nav:reload', () => { const t = getActiveTab(); if (t) t.view.webContents.reload(); });
+ipcMain.handle('page:toggleReadMode', async () => {
+  return toggleReadModeForTab(getActiveTab());
+});
+ipcMain.handle('page:translate', async (_e, lang) => {
+  return translateTab(getActiveTab(), normalizeLang(lang || store.settings.translateTargetLang || store.settings.lang || DEFAULT_LANG));
+});
+ipcMain.handle('page:restoreOriginal', async () => {
+  return restoreOriginalTab(getActiveTab());
+});
 
 ipcMain.handle('state:get', () => ({ tabs: tabs.map(serializeTab), activeId: activeTabId }));
 
@@ -1780,6 +2794,9 @@ ipcMain.handle('settings:get', () => store.settings);
 ipcMain.handle('settings:set', (_e, newSettings = {}) => {
   if (Object.prototype.hasOwnProperty.call(newSettings, 'lang')) {
     newSettings.lang = normalizeLang(newSettings.lang);
+  }
+  if (Object.prototype.hasOwnProperty.call(newSettings, 'translateTargetLang')) {
+    newSettings.translateTargetLang = normalizeLang(newSettings.translateTargetLang);
   }
   if (Object.prototype.hasOwnProperty.call(newSettings, 'homepage')) {
     newSettings.homepage = resolveBrowserUrl(newSettings.homepage, {

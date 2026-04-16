@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld('ag', {
   back: () => ipcRenderer.invoke('nav:back'),
   forward: () => ipcRenderer.invoke('nav:forward'),
   reload: () => ipcRenderer.invoke('nav:reload'),
+  toggleReadMode: () => ipcRenderer.invoke('page:toggleReadMode'),
+  translatePage: (lang) => ipcRenderer.invoke('page:translate', lang),
+  restoreOriginalPage: () => ipcRenderer.invoke('page:restoreOriginal'),
 
   // view management
   hideActiveView: () => ipcRenderer.invoke('view:hideActive'),
