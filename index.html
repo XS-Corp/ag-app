@@ -130,11 +130,20 @@
           <select id="selectLanguage" class="setting-select" aria-label="Language"></select>
         </div>
       </div>
-      <div class="setting-row">
-        <label data-i18n="homepage">Homepage</label>
-        <div class="setting-control setting-control-wide">
-          <input id="inputHomepage" type="text" spellcheck="false" placeholder="https://example.com" />
-          <button id="btnSaveHomepage" data-i18n="save">Save</button>
+      <div class="setting-row setting-row-top">
+        <label for="selectHomepageMode" data-i18n="homepageSource">Homepage source</label>
+        <div class="setting-control setting-control-stack">
+          <select id="selectHomepageMode" class="setting-select" aria-label="Homepage source"></select>
+          <div id="homepageModeHint" class="setting-hint"></div>
+        </div>
+      </div>
+      <div class="setting-row setting-row-top">
+        <label for="inputHomepage" data-i18n="homepageCustomUrl">Custom URL</label>
+        <div class="setting-control setting-control-stack setting-control-wide">
+          <div class="setting-inline-control">
+            <input id="inputHomepage" type="text" spellcheck="false" placeholder="https://example.com" />
+            <button id="btnSaveHomepage" class="settings-primary-btn" data-i18n="save">Save</button>
+          </div>
         </div>
       </div>
       <div class="setting-row">

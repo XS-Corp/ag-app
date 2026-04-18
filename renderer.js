@@ -64,7 +64,9 @@ function applyI18n() {
   btnThemeLight.textContent = t('light');
   selectLanguage.setAttribute('aria-label', t('language'));
   selectLanguage.value = currentLang;
+  selectHomepageMode.setAttribute('aria-label', t('homepageSource'));
   selectTranslateLanguage.setAttribute('aria-label', t('translateLanguage'));
+  updateHomepageSettingsUi();
   renderTranslatePanel();
   applyWindowState(windowState);
 }
@@ -109,6 +111,8 @@ const btnCloseSettings = document.getElementById('btnCloseSettings');
 const btnThemeDark = document.getElementById('btnThemeDark');
 const btnThemeLight = document.getElementById('btnThemeLight');
 const selectLanguage = document.getElementById('selectLanguage');
+const selectHomepageMode = document.getElementById('selectHomepageMode');
+const homepageModeHint = document.getElementById('homepageModeHint');
 const inputHomepage = document.getElementById('inputHomepage');
 const btnSaveHomepage = document.getElementById('btnSaveHomepage');
 const btnClearPermissions = document.getElementById('btnClearPermissions');
@@ -148,12 +152,14 @@ const scheduledUiTasks = new Map();
 
 /* ===== Helpers ===== */
 function isHttp(url) { return /^https?:\/\//i.test(url); }
+function isBuiltinHomepageUrl(url) { return /^ag:\/\/home\/?$/i.test(String(url || '').trim()); }
 const HOSTLIKE_INPUT_RE = /^(localhost|\d{1,3}(?:\.\d{1,3}){3}|(?:[a-z0-9-]+\.)+[a-z]{2,})(?::\d+)?(?:[/?#].*)?$/i;
 const LOCAL_HOST_INPUT_RE = /^(localhost|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:[/?#].*)?$/i;
 
 function normalizeUrl(u) {
   if (!u) return '';
   u = u.trim();
+  if (isBuiltinHomepageUrl(u)) return 'ag://home/';
   if (isHttp(u)) return u;
   if (HOSTLIKE_INPUT_RE.test(u)) {
     const scheme = LOCAL_HOST_INPUT_RE.test(u) ? 'http' : 'https';
@@ -181,6 +187,14 @@ function getLanguageLabel(langCode) {
 
 function getTranslateTargetValue() {
   return normalizeLang(settings.translateTargetLang || currentLang || DEFAULT_LANG);
+}
+
+function normalizeHomepageModeValue(value) {
+  return value === 'custom' ? 'custom' : 'builtin';
+}
+
+function getSelectedHomepageMode() {
+  return normalizeHomepageModeValue(selectHomepageMode.value || settings.homepageMode);
 }
 
 function getActiveTab() {
@@ -300,6 +314,41 @@ function syncBrowserVisibility() {
 }
 
 /* ===== Theme / Settings ===== */
+function populateHomepageModeSelect(selectedMode) {
+  const nextValue = normalizeHomepageModeValue(selectedMode);
+  selectHomepageMode.innerHTML = '';
+
+  [
+    { value: 'builtin', label: t('homepageBuiltIn') },
+    { value: 'custom', label: t('homepageCustom') }
+  ].forEach((optionData) => {
+    const option = document.createElement('option');
+    option.value = optionData.value;
+    option.textContent = optionData.label;
+    if (optionData.value === nextValue) {
+      option.selected = true;
+    }
+    selectHomepageMode.appendChild(option);
+  });
+}
+
+function updateHomepageSettingsUi({ syncInput = false } = {}) {
+  settings.homepageMode = normalizeHomepageModeValue(settings.homepageMode);
+  const selectedMode = normalizeHomepageModeValue(selectHomepageMode.value || settings.homepageMode);
+  populateHomepageModeSelect(selectedMode);
+  selectHomepageMode.value = selectedMode;
+  inputHomepage.placeholder = t('homepageCustomPlaceholder');
+  inputHomepage.disabled = selectedMode !== 'custom';
+  inputHomepage.setAttribute('aria-disabled', String(selectedMode !== 'custom'));
+  homepageModeHint.textContent = selectedMode === 'custom'
+    ? t('homepageCustomHint')
+    : t('homepageBuiltInHint');
+
+  if (syncInput) {
+    inputHomepage.value = settings.homepage || '';
+  }
+}
+
 function applyTheme(theme) {
   document.body.setAttribute('data-theme', theme);
   btnThemeDark.classList.toggle('active', theme === 'dark');
@@ -335,14 +384,25 @@ selectLanguage.onchange = async () => {
   settings = await window.ag.settingsSet({ lang });
   applyLang(lang);
 };
+selectHomepageMode.onchange = () => {
+  updateHomepageSettingsUi();
+};
 btnSaveHomepage.onclick = async () => {
-  const url = inputHomepage.value.trim();
-  if (url) {
-    settings = await window.ag.settingsSet({ homepage: url });
-    inputHomepage.value = settings.homepage || '';
-    btnSaveHomepage.textContent = t('saved');
-    setTimeout(() => { btnSaveHomepage.textContent = t('save'); }, 1500);
+  const homepageMode = getSelectedHomepageMode();
+  if (homepageMode === 'custom') {
+    const url = inputHomepage.value.trim();
+    if (!url) {
+      showToast(t('homepageUrlRequired'));
+      inputHomepage.focus();
+      return;
+    }
+    settings = await window.ag.settingsSet({ homepageMode, homepage: url });
+  } else {
+    settings = await window.ag.settingsSet({ homepageMode });
   }
+  updateHomepageSettingsUi({ syncInput: true });
+  btnSaveHomepage.textContent = t('saved');
+  setTimeout(() => { btnSaveHomepage.textContent = t('save'); }, 1500);
 };
 
 /* ===== Tabs Rendering ===== */
@@ -469,7 +529,7 @@ btnTranslate.onclick = async () => {
   renderTranslatePanel();
   showPanel(panelTranslate);
 };
-btnNew.onclick = () => window.ag.createTab(settings.homepage || '');
+btnNew.onclick = () => window.ag.createTab();
 btnMinimizeWindow.onclick = () => window.ag.windowMinimize();
 btnToggleMaximizeWindow.onclick = async () => {
   const nextState = await window.ag.windowToggleMaximize();
@@ -604,7 +664,7 @@ btnSettings.onclick = async () => {
   settings = await window.ag.settingsGet();
   applyTheme(settings.theme);
   applyLang(settings.lang || DEFAULT_LANG);
-  inputHomepage.value = settings.homepage || '';
+  updateHomepageSettingsUi({ syncInput: true });
   showPanel(panelSettings);
 };
 btnCloseSettings.onclick = () => hideAllPanels();
@@ -894,6 +954,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'F11') { e.preventDe
   applyTheme(settings.theme || 'dark');
   settings.translateTargetLang = normalizeLang(settings.translateTargetLang || settings.lang || DEFAULT_LANG);
   applyLang(settings.lang || DEFAULT_LANG);
+  updateHomepageSettingsUi({ syncInput: true });
   selectTranslateLanguage.value = getTranslateTargetValue();
   renderTranslatePanel();
 
@@ -904,7 +965,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'F11') { e.preventDe
   const state = await window.ag.getState();
   tabs = state.tabs || [];
   activeId = state.activeId || (tabs[0]?.id ?? null);
-  if (!tabs.length) await window.ag.createTab(settings.homepage || '');
+  if (!tabs.length) await window.ag.createTab();
   renderTabs();
   updateToolbarState();
 })();

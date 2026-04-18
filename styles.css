@@ -708,6 +708,9 @@ html[data-platform="darwin"] .window-frame__dot {
   justify-content: space-between;
   gap: 12px;
 }
+.setting-row-top {
+  align-items: flex-start;
+}
 .setting-row label {
   font-size: 13.5px;
   font-weight: 550;
@@ -719,8 +722,17 @@ html[data-platform="darwin"] .window-frame__dot {
   gap: 6px;
   align-items: center;
 }
+.setting-control-stack {
+  flex-direction: column;
+  align-items: stretch;
+}
 .setting-control-wide {
   flex: 1;
+}
+.setting-inline-control {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 .setting-control-wide input {
   flex: 1;
@@ -737,6 +749,16 @@ html[data-platform="darwin"] .window-frame__dot {
 .setting-control-wide input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.setting-control-wide input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.setting-hint {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+  max-width: 420px;
 }
 
 .theme-btn {
@@ -1173,6 +1195,12 @@ body.is-rtl .permission-source {
 
   .setting-control {
     justify-content: stretch;
+  }
+
+  .setting-inline-control {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .toolbar {

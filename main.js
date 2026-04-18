@@ -3,6 +3,7 @@ const {
   BrowserWindow,
   BrowserView,
   ipcMain,
+  protocol,
   shell,
   dialog,
   globalShortcut,
@@ -16,6 +17,14 @@ const https = require('https');
 const { fileURLToPath, pathToFileURL } = require('url');
 const AdmZip = require('adm-zip');
 const {
+  BUILTIN_HOMEPAGE_URL,
+  DEFAULT_CUSTOM_HOMEPAGE,
+  HOMEPAGE_MODE_BUILTIN,
+  HOMEPAGE_MODE_CUSTOM,
+  isBuiltinHomepageUrl,
+  buildBuiltinHomepageHtml
+} = require('./builtin-home');
+const {
   DEFAULT_LANG,
   LANGUAGES,
   getLangConfig,
@@ -25,8 +34,19 @@ const {
   normalizeLang
 } = require('./i18n');
 
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'ag',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true
+    }
+  }
+]);
+
 const APP_ROOT = __dirname;
-const DEFAULT_HOMEPAGE = 'https://search.kickedstorm.com/';
 const EMPTY_EXT_THEME = '/* no extension theme active */\n';
 const SEARCH_FALLBACK_PREFIX = 'https://www.google.com/search?q=';
 const GOOGLE_TRANSLATE_API_URL = 'https://translate.googleapis.com/translate_a/t';
@@ -73,6 +93,16 @@ let activeHtmlOverridePath = null;
 let nextPermissionPromptId = 1;
 let permissionPromptQueue = Promise.resolve();
 const pendingPermissionPrompts = new Map();
+const MAX_HISTORY_ITEMS = 36;
+const HOMEPAGE_SECTION_ITEMS = 8;
+const BUILTIN_HOME_QUICK_LINKS = [
+  { title: 'YouTube', url: 'https://www.youtube.com/', icon: 'YT', accent: '#ff4d6d' },
+  { title: 'Telegram', url: 'https://web.telegram.org/', icon: 'TG', accent: '#44b2ff' },
+  { title: 'GitHub', url: 'https://github.com/', icon: 'GH', accent: '#7c8aa5' },
+  { title: 'Gmail', url: 'https://mail.google.com/', icon: 'GM', accent: '#ff7b54' },
+  { title: 'Drive', url: 'https://drive.google.com/', icon: 'DR', accent: '#5aa5ff' },
+  { title: 'Calendar', url: 'https://calendar.google.com/', icon: 'CL', accent: '#3d8bfd' }
+];
 
 function getRuntimeRoot() {
   return app.getPath('userData');
@@ -129,15 +159,36 @@ function normalizeRawUrlInput(rawUrl) {
   return '';
 }
 
-function resolveBrowserUrl(rawUrl, { fallbackUrl = DEFAULT_HOMEPAGE, allowSearchFallback = true } = {}) {
+function isInternalBrowserUrl(rawUrl) {
+  return isBuiltinHomepageUrl(rawUrl);
+}
+
+function isNavigableBrowserUrl(rawUrl) {
+  return isSafeBrowserUrl(rawUrl) || isInternalBrowserUrl(rawUrl);
+}
+
+function normalizeHomepageMode(value) {
+  return value === HOMEPAGE_MODE_CUSTOM ? HOMEPAGE_MODE_CUSTOM : HOMEPAGE_MODE_BUILTIN;
+}
+
+function resolveBrowserUrl(rawUrl, { fallbackUrl = DEFAULT_CUSTOM_HOMEPAGE, allowSearchFallback = true } = {}) {
   const fallbackParsed = safeParseUrl(fallbackUrl);
-  const safeFallback = fallbackParsed && SAFE_BROWSER_PROTOCOLS.has(fallbackParsed.protocol)
-    ? fallbackParsed.toString()
-    : DEFAULT_HOMEPAGE;
+  const safeFallback = isInternalBrowserUrl(fallbackUrl)
+    ? BUILTIN_HOMEPAGE_URL
+    : fallbackParsed && SAFE_BROWSER_PROTOCOLS.has(fallbackParsed.protocol)
+      ? fallbackParsed.toString()
+      : DEFAULT_CUSTOM_HOMEPAGE;
 
   const input = String(rawUrl || '').trim();
+  if (isInternalBrowserUrl(input)) {
+    return BUILTIN_HOMEPAGE_URL;
+  }
+
   const normalized = normalizeRawUrlInput(input);
   if (normalized) {
+    if (isInternalBrowserUrl(normalized)) {
+      return BUILTIN_HOMEPAGE_URL;
+    }
     const parsed = safeParseUrl(normalized);
     if (parsed && SAFE_BROWSER_PROTOCOLS.has(parsed.protocol)) {
       return parsed.toString();
@@ -973,6 +1024,196 @@ function getDisableReadModeScript() {
 
 function getCurrentUiStrings() {
   return getUiStrings(store.settings?.lang || DEFAULT_LANG);
+}
+
+function getDisplayHostname(rawUrl) {
+  const parsed = safeParseUrl(rawUrl);
+  return parsed?.hostname ? parsed.hostname.replace(/^www\./i, '') : '';
+}
+
+function getFallbackSiteLabel(rawUrl) {
+  const host = getDisplayHostname(rawUrl);
+  if (!host) return String(rawUrl || '').trim();
+  const [firstPart] = host.split('.');
+  if (!firstPart) return host;
+  return firstPart.charAt(0).toUpperCase() + firstPart.slice(1);
+}
+
+function getSiteInitials(label) {
+  const parts = String(label || '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+
+  if (!parts.length) return 'AG';
+  return parts.map(part => part[0]).join('').toUpperCase();
+}
+
+function isMeaningfulTabTitle(title, rawUrl) {
+  const trimmed = String(title || '').trim();
+  if (!trimmed) return false;
+  const lower = trimmed.toLowerCase();
+  if (lower === 'loading...' || lower === 'new tab') return false;
+  return trimmed !== String(rawUrl || '').trim();
+}
+
+function sanitizeHistoryTitle(title, rawUrl, existingTitle = '') {
+  if (isMeaningfulTabTitle(title, rawUrl)) {
+    return decodeHtmlEntities(String(title || '').trim());
+  }
+  if (existingTitle) return existingTitle;
+  return getFallbackSiteLabel(rawUrl);
+}
+
+function getHomepageFallbackFavicon(rawUrl) {
+  const host = getDisplayHostname(rawUrl);
+  return host ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64` : '';
+}
+
+function upsertHistoryEntry(entry = {}, { touch = true } = {}) {
+  const normalizedUrl = getComparableBrowserUrl(entry.url);
+  if (!normalizedUrl) return null;
+
+  if (!Array.isArray(store.history)) {
+    store.history = [];
+  }
+
+  const existingIndex = store.history.findIndex(item => item.url === normalizedUrl);
+  const existing = existingIndex >= 0 ? store.history[existingIndex] : null;
+  const timestamp = touch ? Date.now() : (existing?.lastVisited || Date.now());
+  const nextEntry = {
+    url: normalizedUrl,
+    title: sanitizeHistoryTitle(entry.title, normalizedUrl, existing?.title || ''),
+    favicon: isSafeBrowserUrl(entry.favicon) ? entry.favicon : (existing?.favicon || ''),
+    lastVisited: timestamp
+  };
+
+  const changed = !existing ||
+    existing.title !== nextEntry.title ||
+    existing.favicon !== nextEntry.favicon ||
+    existing.lastVisited !== nextEntry.lastVisited;
+
+  if (!changed) {
+    return existing;
+  }
+
+  if (existingIndex >= 0) {
+    store.history.splice(existingIndex, 1, nextEntry);
+  } else {
+    store.history.push(nextEntry);
+  }
+
+  store.history.sort((left, right) => (right.lastVisited || 0) - (left.lastVisited || 0));
+  store.history = store.history.slice(0, MAX_HISTORY_ITEMS);
+  saveStore();
+  return nextEntry;
+}
+
+function recordTabVisit(tab, { touch = true } = {}) {
+  if (!tab) return null;
+  const sourceUrl = tab.translationOriginalUrl || tab.url;
+  return upsertHistoryEntry({
+    url: sourceUrl,
+    title: tab.title,
+    favicon: tab.favicon
+  }, { touch });
+}
+
+function buildHomepageSiteItem(rawUrl) {
+  const normalizedUrl = getComparableBrowserUrl(rawUrl);
+  if (!normalizedUrl) return null;
+
+  const historyEntry = Array.isArray(store.history)
+    ? store.history.find(item => item.url === normalizedUrl)
+    : null;
+  const host = getDisplayHostname(normalizedUrl);
+  const title = historyEntry?.title || getFallbackSiteLabel(normalizedUrl);
+
+  return {
+    url: normalizedUrl,
+    title,
+    subtitle: host || normalizedUrl,
+    favicon: historyEntry?.favicon || getHomepageFallbackFavicon(normalizedUrl),
+    initials: getSiteInitials(title)
+  };
+}
+
+function getHomepageSection() {
+  const uiStrings = getCurrentUiStrings();
+  const pinnedUrls = [...new Set((store.pinnedTabs || []).map(url => getComparableBrowserUrl(url)).filter(Boolean))];
+  const pinnedItems = pinnedUrls
+    .map(buildHomepageSiteItem)
+    .filter(Boolean)
+    .slice(0, HOMEPAGE_SECTION_ITEMS);
+
+  if (pinnedItems.length > 0) {
+    return {
+      title: uiStrings.homePinnedSites || 'Pinned sites',
+      items: pinnedItems
+    };
+  }
+
+  const pinnedSet = new Set(pinnedUrls);
+  const recentItems = (store.history || [])
+    .filter(entry => entry?.url && !pinnedSet.has(entry.url))
+    .map(entry => buildHomepageSiteItem(entry.url))
+    .filter(Boolean)
+    .slice(0, HOMEPAGE_SECTION_ITEMS);
+
+  if (recentItems.length > 0) {
+    return {
+      title: uiStrings.homeRecentSites || 'Recent visits',
+      items: recentItems
+    };
+  }
+
+  return null;
+}
+
+function getBuiltinHomepageStrings() {
+  const uiStrings = getCurrentUiStrings();
+  return {
+    pageTitle: uiStrings.homePageTitle || 'AG Home',
+    brandLabel: uiStrings.homeBrandLabel || 'AG Browser',
+    searchTitle: uiStrings.homeSearchTitle || 'AG Search',
+    subtitle: uiStrings.homeSubtitle || 'Search the web without leaving the start page.',
+    searchPlaceholder: uiStrings.homeSearchPlaceholder || 'Search the web or type a URL',
+    searchButton: uiStrings.homeSearchButton || 'Search',
+    searchHint: uiStrings.homeSearchHint || 'Press Enter to search, or type a URL to open it right away.',
+    quickLinksTitle: uiStrings.homeQuickLinks || 'Quick links',
+    resultsTitle: uiStrings.homeResultsTitle || 'Results',
+    searchLoading: uiStrings.homeSearchLoading || 'Searching...',
+    searchNoResults: uiStrings.homeSearchNoResults || 'Nothing was found.',
+    searchError: uiStrings.homeSearchError || 'Inline search is unavailable right now.',
+    searchFallbackAction: uiStrings.homeSearchFallbackAction || 'Open in AG Search'
+  };
+}
+
+function buildBuiltinHomepageResponse() {
+  const html = buildBuiltinHomepageHtml({
+    theme: store.settings?.theme === 'light' ? 'light' : 'dark',
+    lang: getLangConfig(store.settings?.lang || DEFAULT_LANG).htmlLang,
+    strings: getBuiltinHomepageStrings(),
+    searchBaseUrl: DEFAULT_CUSTOM_HOMEPAGE
+  });
+
+  return new Response(html, {
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store'
+    }
+  });
+}
+
+function registerAppProtocols() {
+  protocol.handle('ag', (request) => {
+    const parsed = safeParseUrl(request.url);
+    if (!parsed || parsed.hostname !== 'home') {
+      return new Response('Not found', { status: 404 });
+    }
+    return buildBuiltinHomepageResponse();
+  });
 }
 
 function getOriginFromUrl(rawUrl) {
@@ -1843,9 +2084,41 @@ function loadStore() {
   if (!store.settings.theme) store.settings.theme = 'dark';
   store.settings.lang = normalizeLang(store.settings.lang || DEFAULT_LANG);
   store.settings.translateTargetLang = normalizeLang(store.settings.translateTargetLang || store.settings.lang || DEFAULT_LANG);
-  if (!store.settings.homepage) store.settings.homepage = DEFAULT_HOMEPAGE;
+  if (!store.settings.homepage) store.settings.homepage = DEFAULT_CUSTOM_HOMEPAGE;
+  const normalizedHomepage = resolveBrowserUrl(store.settings.homepage, {
+    fallbackUrl: DEFAULT_CUSTOM_HOMEPAGE,
+    allowSearchFallback: false
+  });
+  store.settings.homepage = normalizedHomepage;
+  if (!store.settings.homepageMode) {
+    store.settings.homepageMode = normalizedHomepage === DEFAULT_CUSTOM_HOMEPAGE
+      ? HOMEPAGE_MODE_BUILTIN
+      : HOMEPAGE_MODE_CUSTOM;
+  } else {
+    store.settings.homepageMode = normalizeHomepageMode(store.settings.homepageMode);
+  }
   if (!store.extensions) store.extensions = {};
   if (!store.pinnedTabs) store.pinnedTabs = [];
+  store.pinnedTabs = store.pinnedTabs
+    .map(url => getComparableBrowserUrl(url))
+    .filter(Boolean);
+  if (!Array.isArray(store.history)) {
+    store.history = [];
+  }
+  store.history = store.history
+    .map((entry) => {
+      const normalizedUrl = getComparableBrowserUrl(entry?.url);
+      if (!normalizedUrl) return null;
+      return {
+        url: normalizedUrl,
+        title: sanitizeHistoryTitle(entry?.title, normalizedUrl),
+        favicon: isSafeBrowserUrl(entry?.favicon) ? entry.favicon : '',
+        lastVisited: Number.isFinite(entry?.lastVisited) ? entry.lastVisited : 0
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => (right.lastVisited || 0) - (left.lastVisited || 0))
+    .slice(0, MAX_HISTORY_ITEMS);
   if (!store.permissions || typeof store.permissions !== 'object') store.permissions = {};
 }
 
@@ -1858,15 +2131,32 @@ function saveStore() {
 }
 
 function savePinnedTabs() {
-  store.pinnedTabs = tabs.filter(t => t.pinned).map(t => t.url);
+  store.pinnedTabs = [...new Set(
+    tabs
+      .filter(t => t.pinned)
+      .map(t => getComparableBrowserUrl(t.translationOriginalUrl || t.url))
+      .filter(Boolean)
+  )];
   saveStore();
+  refreshBuiltinHomepageTabs();
 }
 
 function getHomepage() {
-  return resolveBrowserUrl(store.settings.homepage || DEFAULT_HOMEPAGE, {
-    fallbackUrl: DEFAULT_HOMEPAGE,
+  if (normalizeHomepageMode(store.settings.homepageMode) === HOMEPAGE_MODE_BUILTIN) {
+    return BUILTIN_HOMEPAGE_URL;
+  }
+  return resolveBrowserUrl(store.settings.homepage || DEFAULT_CUSTOM_HOMEPAGE, {
+    fallbackUrl: DEFAULT_CUSTOM_HOMEPAGE,
     allowSearchFallback: false
   });
+}
+
+function refreshBuiltinHomepageTabs() {
+  tabs
+    .filter(tab => isInternalBrowserUrl(tab.url))
+    .forEach((tab) => {
+      tab.view.webContents.reloadIgnoringCache();
+    });
 }
 
 /* ---------- WebAssembly & Performance ---------- */
@@ -2201,7 +2491,7 @@ function createTab(url, pinned = false) {
   });
 
   view.webContents.setWindowOpenHandler(({ url }) => {
-    if (!isSafeBrowserUrl(url)) {
+    if (!isNavigableBrowserUrl(url)) {
       openExternalUrl(url, SAFE_VIEW_EXTERNAL_PROTOCOLS);
       return { action: 'deny' };
     }
@@ -2213,7 +2503,7 @@ function createTab(url, pinned = false) {
   });
 
   view.webContents.on('will-navigate', (e, url) => {
-    if (!isSafeBrowserUrl(url)) {
+    if (!isNavigableBrowserUrl(url)) {
       e.preventDefault();
       openExternalUrl(url, SAFE_VIEW_EXTERNAL_PROTOCOLS);
     }
@@ -2275,7 +2565,10 @@ function createTab(url, pinned = false) {
     tab.canGoForward = view.webContents.canGoForward();
     syncDerivedTabState(tab);
     try {
-      tab.favicon = view.webContents.getURL().split('/').slice(0, 3).join('/') + '/favicon.ico';
+      const faviconSourceUrl = tab.translationOriginalUrl || tab.url;
+      tab.favicon = isSafeBrowserUrl(faviconSourceUrl)
+        ? safeParseUrl(faviconSourceUrl).origin + '/favicon.ico'
+        : null;
     } catch { tab.favicon = null; }
     queueTabUpdate(tab);
   };
@@ -2289,11 +2582,21 @@ function createTab(url, pinned = false) {
     queueTabUpdate(tab);
   });
 
-  view.webContents.on('page-title-updated', updateState);
-  view.webContents.on('did-navigate', updateState);
-  view.webContents.on('did-navigate-in-page', updateState);
+  view.webContents.on('page-title-updated', () => {
+    updateState();
+    recordTabVisit(tab, { touch: false });
+  });
+  view.webContents.on('did-navigate', () => {
+    updateState();
+    recordTabVisit(tab, { touch: true });
+  });
+  view.webContents.on('did-navigate-in-page', () => {
+    updateState();
+    recordTabVisit(tab, { touch: true });
+  });
   view.webContents.on('did-finish-load', () => {
     updateState();
+    recordTabVisit(tab, { touch: false });
     if (tab.translatedTo && tab.translationMode === 'in-page' && isSameComparableBrowserUrl(tab.url, tab.translationOriginalUrl)) {
       void translateTab(tab, tab.translatedTo).then((result) => {
         if (!result.success && tab.translatedTo) {
@@ -2317,6 +2620,7 @@ function createTab(url, pinned = false) {
   view.webContents.on('page-favicon-updated', (event, favicons) => {
     if (favicons?.length > 0) {
       tab.favicon = favicons[0];
+      recordTabVisit(tab, { touch: false });
       queueTabUpdate(tab);
     }
   });
@@ -2798,15 +3102,19 @@ ipcMain.handle('settings:set', (_e, newSettings = {}) => {
   if (Object.prototype.hasOwnProperty.call(newSettings, 'translateTargetLang')) {
     newSettings.translateTargetLang = normalizeLang(newSettings.translateTargetLang);
   }
+  if (Object.prototype.hasOwnProperty.call(newSettings, 'homepageMode')) {
+    newSettings.homepageMode = normalizeHomepageMode(newSettings.homepageMode);
+  }
   if (Object.prototype.hasOwnProperty.call(newSettings, 'homepage')) {
     newSettings.homepage = resolveBrowserUrl(newSettings.homepage, {
-      fallbackUrl: DEFAULT_HOMEPAGE,
+      fallbackUrl: DEFAULT_CUSTOM_HOMEPAGE,
       allowSearchFallback: false
     });
   }
   Object.assign(store.settings, newSettings);
   saveStore();
   buildAppMenu();
+  refreshBuiltinHomepageTabs();
   return store.settings;
 });
 
@@ -2814,6 +3122,9 @@ ipcMain.handle('settings:set', (_e, newSettings = {}) => {
 app.setName('AG Browser');
 if (process.platform === 'win32') app.setAppUserModelId('com.kickedstorm.agbrowser');
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  registerAppProtocols();
+  return createWindow();
+});
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
