@@ -27,6 +27,24 @@
   ];
 
   const LANGUAGE_MAP = Object.fromEntries(LANGUAGES.map((lang) => [lang.code, lang]));
+  const LANGUAGE_ALIAS_MAP = {};
+  const BASE_LANGUAGE_MAP = {};
+
+  for (const lang of LANGUAGES) {
+    const aliases = new Set([lang.code, lang.htmlLang]);
+    aliases.forEach((alias) => {
+      if (!alias) return;
+      LANGUAGE_ALIAS_MAP[String(alias).replace(/_/g, "-").toLowerCase()] = lang.code;
+    });
+
+    const base = String(lang.code).split("-")[0].toLowerCase();
+    if (!BASE_LANGUAGE_MAP[base]) {
+      BASE_LANGUAGE_MAP[base] = lang.code;
+    }
+  }
+
+  BASE_LANGUAGE_MAP.pt = "pt-BR";
+  BASE_LANGUAGE_MAP.zh = "zh-CN";
 
   const LOCALES = {
     ru: {
@@ -2517,6 +2535,185 @@
     }
   };
 
+  const CONTEXT_MENU_UI_STRINGS = {
+    ru: {
+      contextMenuOpenLinkInNewTab: "Открыть ссылку в новой вкладке",
+      contextMenuCopyLink: "Копировать адрес ссылки",
+      contextMenuOpenImageInNewTab: "Открыть изображение в новой вкладке",
+      contextMenuCopyImage: "Копировать адрес изображения",
+      contextMenuSaveImage: "Сохранить изображение",
+      contextMenuSearchWeb: "Искать в интернете: «{{text}}»",
+      contextMenuInspectElement: "Просмотреть код элемента",
+      contextMenuNoSuggestions: "Нет вариантов замены",
+      contextMenuAddToDictionary: "Добавить в словарь"
+    },
+    en: {
+      contextMenuOpenLinkInNewTab: "Open link in new tab",
+      contextMenuCopyLink: "Copy link address",
+      contextMenuOpenImageInNewTab: "Open image in new tab",
+      contextMenuCopyImage: "Copy image address",
+      contextMenuSaveImage: "Save image",
+      contextMenuSearchWeb: "Search the web for “{{text}}”",
+      contextMenuInspectElement: "Inspect element",
+      contextMenuNoSuggestions: "No spelling suggestions",
+      contextMenuAddToDictionary: "Add to dictionary"
+    },
+    es: {
+      contextMenuOpenLinkInNewTab: "Abrir enlace en una pestaña nueva",
+      contextMenuCopyLink: "Copiar dirección del enlace",
+      contextMenuOpenImageInNewTab: "Abrir imagen en una pestaña nueva",
+      contextMenuCopyImage: "Copiar dirección de la imagen",
+      contextMenuSaveImage: "Guardar imagen",
+      contextMenuSearchWeb: "Buscar en la web «{{text}}»",
+      contextMenuInspectElement: "Inspeccionar elemento",
+      contextMenuNoSuggestions: "No hay sugerencias ortográficas",
+      contextMenuAddToDictionary: "Añadir al diccionario"
+    },
+    "pt-BR": {
+      contextMenuOpenLinkInNewTab: "Abrir link em nova aba",
+      contextMenuCopyLink: "Copiar endereço do link",
+      contextMenuOpenImageInNewTab: "Abrir imagem em nova aba",
+      contextMenuCopyImage: "Copiar endereço da imagem",
+      contextMenuSaveImage: "Salvar imagem",
+      contextMenuSearchWeb: "Pesquisar na web por “{{text}}”",
+      contextMenuInspectElement: "Inspecionar elemento",
+      contextMenuNoSuggestions: "Sem sugestões de ortografia",
+      contextMenuAddToDictionary: "Adicionar ao dicionário"
+    },
+    de: {
+      contextMenuOpenLinkInNewTab: "Link in neuem Tab öffnen",
+      contextMenuCopyLink: "Linkadresse kopieren",
+      contextMenuOpenImageInNewTab: "Bild in neuem Tab öffnen",
+      contextMenuCopyImage: "Bildadresse kopieren",
+      contextMenuSaveImage: "Bild speichern",
+      contextMenuSearchWeb: "Im Web nach „{{text}}“ suchen",
+      contextMenuInspectElement: "Element untersuchen",
+      contextMenuNoSuggestions: "Keine Rechtschreibvorschläge",
+      contextMenuAddToDictionary: "Zum Wörterbuch hinzufügen"
+    },
+    fr: {
+      contextMenuOpenLinkInNewTab: "Ouvrir le lien dans un nouvel onglet",
+      contextMenuCopyLink: "Copier l’adresse du lien",
+      contextMenuOpenImageInNewTab: "Ouvrir l’image dans un nouvel onglet",
+      contextMenuCopyImage: "Copier l’adresse de l’image",
+      contextMenuSaveImage: "Enregistrer l’image",
+      contextMenuSearchWeb: "Rechercher « {{text}} » sur le web",
+      contextMenuInspectElement: "Inspecter l’élément",
+      contextMenuNoSuggestions: "Aucune suggestion orthographique",
+      contextMenuAddToDictionary: "Ajouter au dictionnaire"
+    },
+    "zh-CN": {
+      contextMenuOpenLinkInNewTab: "在新标签页中打开链接",
+      contextMenuCopyLink: "复制链接地址",
+      contextMenuOpenImageInNewTab: "在新标签页中打开图片",
+      contextMenuCopyImage: "复制图片地址",
+      contextMenuSaveImage: "保存图片",
+      contextMenuSearchWeb: "搜索网络内容“{{text}}”",
+      contextMenuInspectElement: "检查元素",
+      contextMenuNoSuggestions: "没有拼写建议",
+      contextMenuAddToDictionary: "添加到词典"
+    },
+    "zh-TW": {
+      contextMenuOpenLinkInNewTab: "在新分頁中開啟連結",
+      contextMenuCopyLink: "複製連結網址",
+      contextMenuOpenImageInNewTab: "在新分頁中開啟圖片",
+      contextMenuCopyImage: "複製圖片網址",
+      contextMenuSaveImage: "儲存圖片",
+      contextMenuSearchWeb: "搜尋網頁內容「{{text}}」",
+      contextMenuInspectElement: "檢查元素",
+      contextMenuNoSuggestions: "沒有拼字建議",
+      contextMenuAddToDictionary: "加入字典"
+    },
+    ja: {
+      contextMenuOpenLinkInNewTab: "リンクを新しいタブで開く",
+      contextMenuCopyLink: "リンク先をコピー",
+      contextMenuOpenImageInNewTab: "画像を新しいタブで開く",
+      contextMenuCopyImage: "画像のURLをコピー",
+      contextMenuSaveImage: "画像を保存",
+      contextMenuSearchWeb: "ウェブで「{{text}}」を検索",
+      contextMenuInspectElement: "要素を検証",
+      contextMenuNoSuggestions: "スペルの候補はありません",
+      contextMenuAddToDictionary: "辞書に追加"
+    },
+    ko: {
+      contextMenuOpenLinkInNewTab: "링크를 새 탭에서 열기",
+      contextMenuCopyLink: "링크 주소 복사",
+      contextMenuOpenImageInNewTab: "이미지를 새 탭에서 열기",
+      contextMenuCopyImage: "이미지 주소 복사",
+      contextMenuSaveImage: "이미지 저장",
+      contextMenuSearchWeb: "웹에서 “{{text}}” 검색",
+      contextMenuInspectElement: "요소 검사",
+      contextMenuNoSuggestions: "맞춤법 제안 없음",
+      contextMenuAddToDictionary: "사전에 추가"
+    },
+    it: {
+      contextMenuOpenLinkInNewTab: "Apri link in una nuova scheda",
+      contextMenuCopyLink: "Copia indirizzo del link",
+      contextMenuOpenImageInNewTab: "Apri immagine in una nuova scheda",
+      contextMenuCopyImage: "Copia indirizzo dell’immagine",
+      contextMenuSaveImage: "Salva immagine",
+      contextMenuSearchWeb: "Cerca sul web “{{text}}”",
+      contextMenuInspectElement: "Ispeziona elemento",
+      contextMenuNoSuggestions: "Nessun suggerimento ortografico",
+      contextMenuAddToDictionary: "Aggiungi al dizionario"
+    },
+    tr: {
+      contextMenuOpenLinkInNewTab: "Bağlantıyı yeni sekmede aç",
+      contextMenuCopyLink: "Bağlantı adresini kopyala",
+      contextMenuOpenImageInNewTab: "Görseli yeni sekmede aç",
+      contextMenuCopyImage: "Görsel adresini kopyala",
+      contextMenuSaveImage: "Görseli kaydet",
+      contextMenuSearchWeb: "Web'de “{{text}}” için ara",
+      contextMenuInspectElement: "Öğeyi incele",
+      contextMenuNoSuggestions: "Yazım önerisi yok",
+      contextMenuAddToDictionary: "Sözlüğe ekle"
+    },
+    pl: {
+      contextMenuOpenLinkInNewTab: "Otwórz link w nowej karcie",
+      contextMenuCopyLink: "Kopiuj adres linku",
+      contextMenuOpenImageInNewTab: "Otwórz obraz w nowej karcie",
+      contextMenuCopyImage: "Kopiuj adres obrazu",
+      contextMenuSaveImage: "Zapisz obraz",
+      contextMenuSearchWeb: "Szukaj w sieci: „{{text}}”",
+      contextMenuInspectElement: "Zbadaj element",
+      contextMenuNoSuggestions: "Brak podpowiedzi pisowni",
+      contextMenuAddToDictionary: "Dodaj do słownika"
+    },
+    uk: {
+      contextMenuOpenLinkInNewTab: "Відкрити посилання в новій вкладці",
+      contextMenuCopyLink: "Копіювати адресу посилання",
+      contextMenuOpenImageInNewTab: "Відкрити зображення в новій вкладці",
+      contextMenuCopyImage: "Копіювати адресу зображення",
+      contextMenuSaveImage: "Зберегти зображення",
+      contextMenuSearchWeb: "Шукати в інтернеті: «{{text}}»",
+      contextMenuInspectElement: "Перевірити елемент",
+      contextMenuNoSuggestions: "Немає варіантів правопису",
+      contextMenuAddToDictionary: "Додати до словника"
+    },
+    ar: {
+      contextMenuOpenLinkInNewTab: "فتح الرابط في علامة تبويب جديدة",
+      contextMenuCopyLink: "نسخ عنوان الرابط",
+      contextMenuOpenImageInNewTab: "فتح الصورة في علامة تبويب جديدة",
+      contextMenuCopyImage: "نسخ عنوان الصورة",
+      contextMenuSaveImage: "حفظ الصورة",
+      contextMenuSearchWeb: "البحث في الويب عن «{{text}}»",
+      contextMenuInspectElement: "فحص العنصر",
+      contextMenuNoSuggestions: "لا توجد اقتراحات إملائية",
+      contextMenuAddToDictionary: "إضافة إلى القاموس"
+    },
+    hi: {
+      contextMenuOpenLinkInNewTab: "लिंक को नए टैब में खोलें",
+      contextMenuCopyLink: "लिंक पता कॉपी करें",
+      contextMenuOpenImageInNewTab: "छवि को नए टैब में खोलें",
+      contextMenuCopyImage: "छवि पता कॉपी करें",
+      contextMenuSaveImage: "छवि सहेजें",
+      contextMenuSearchWeb: "वेब पर “{{text}}” खोजें",
+      contextMenuInspectElement: "तत्व जाँचें",
+      contextMenuNoSuggestions: "कोई वर्तनी सुझाव नहीं",
+      contextMenuAddToDictionary: "शब्दकोश में जोड़ें"
+    }
+  };
+
   for (const [lang, ui] of Object.entries(EXTRA_UI_STRINGS)) {
     if (LOCALES[lang]) {
       LOCALES[lang].ui = { ...LOCALES[lang].ui, ...ui };
@@ -2529,8 +2726,41 @@
     }
   }
 
+  for (const [lang, ui] of Object.entries(CONTEXT_MENU_UI_STRINGS)) {
+    if (LOCALES[lang]) {
+      LOCALES[lang].ui = { ...LOCALES[lang].ui, ...ui };
+    }
+  }
+
   function normalizeLang(lang) {
-    return LANGUAGE_MAP[lang] ? lang : DEFAULT_LANG;
+    const candidates = Array.isArray(lang) ? lang : [lang];
+
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+
+      const normalized = String(candidate).trim().replace(/_/g, "-");
+      if (!normalized) continue;
+
+      const lower = normalized.toLowerCase();
+      if (LANGUAGE_ALIAS_MAP[lower]) {
+        return LANGUAGE_ALIAS_MAP[lower];
+      }
+
+      if (lower === "zh" || lower.startsWith("zh-")) {
+        return /^zh-(hant|tw|hk|mo)\b/i.test(lower) ? "zh-TW" : "zh-CN";
+      }
+
+      if (lower === "pt" || lower.startsWith("pt-")) {
+        return "pt-BR";
+      }
+
+      const base = lower.split("-")[0];
+      if (BASE_LANGUAGE_MAP[base]) {
+        return BASE_LANGUAGE_MAP[base];
+      }
+    }
+
+    return DEFAULT_LANG;
   }
 
   function getLangConfig(lang) {

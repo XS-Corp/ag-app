@@ -5,6 +5,7 @@ const {
   ipcMain,
   protocol,
   shell,
+  clipboard,
   dialog,
   globalShortcut,
   Menu,
@@ -1024,6 +1025,184 @@ function getDisableReadModeScript() {
 
 function getCurrentUiStrings() {
   return getUiStrings(store.settings?.lang || DEFAULT_LANG);
+}
+
+function getCurrentMenuStrings() {
+  return getMenuStrings(store.settings?.lang || DEFAULT_LANG);
+}
+
+function formatLocalizedString(template, replacements = {}) {
+  return String(template || '').replace(/\{\{(\w+)\}\}/g, (_match, key) => {
+    const value = replacements[key];
+    return value == null ? '' : String(value);
+  });
+}
+
+function getContextMenuSelectionText(text, maxLength = 48) {
+  const compact = String(text || '').replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxLength) return compact;
+  return `${compact.slice(0, Math.max(0, maxLength - 1)).trimEnd()}\u2026`;
+}
+
+function joinMenuSections(sections) {
+  const menu = [];
+  sections
+    .map((section) => section.filter((item, itemIndex) => {
+      if (item.type !== 'separator') return true;
+      if (itemIndex === 0 || itemIndex === section.length - 1) return false;
+      return section[itemIndex - 1]?.type !== 'separator';
+    }))
+    .filter(section => section.length > 0)
+    .forEach((section, index) => {
+      if (index > 0) {
+        menu.push({ type: 'separator' });
+      }
+      menu.push(...section);
+    });
+  return menu;
+}
+
+function buildContextMenuTemplate(webContents, params = {}, {
+  includeNavigation = true,
+  includeInspect = true,
+  includeLinkActions = true,
+  includeImageActions = true,
+  includeSearch = true
+} = {}) {
+  const uiStrings = getCurrentUiStrings();
+  const menuStrings = getCurrentMenuStrings();
+  const editFlags = params.editFlags || {};
+  const sections = [];
+
+  if (params.isEditable && params.misspelledWord) {
+    const spellcheckItems = [];
+    if (Array.isArray(params.dictionarySuggestions) && params.dictionarySuggestions.length) {
+      params.dictionarySuggestions.slice(0, 6).forEach((suggestion) => {
+        spellcheckItems.push({
+          label: suggestion,
+          click: () => webContents.replaceMisspelling(suggestion)
+        });
+      });
+    } else {
+      spellcheckItems.push({
+        label: uiStrings.contextMenuNoSuggestions,
+        enabled: false
+      });
+    }
+
+    if (typeof webContents.session?.addWordToSpellCheckerDictionary === 'function') {
+      spellcheckItems.push({
+        label: uiStrings.contextMenuAddToDictionary,
+        click: () => webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord)
+      });
+    }
+
+    sections.push(spellcheckItems);
+  }
+
+  const editItems = [];
+  if (params.isEditable) {
+    if (editFlags.canUndo) editItems.push({ label: menuStrings.undo, click: () => webContents.undo() });
+    if (editFlags.canRedo) editItems.push({ label: menuStrings.redo, click: () => webContents.redo() });
+    if (editFlags.canUndo || editFlags.canRedo) editItems.push({ type: 'separator' });
+    if (editFlags.canCut) editItems.push({ label: menuStrings.cut, click: () => webContents.cut() });
+    if (editFlags.canCopy) editItems.push({ label: menuStrings.copy, click: () => webContents.copy() });
+    if (editFlags.canPaste) editItems.push({ label: menuStrings.paste, click: () => webContents.paste() });
+    if (editFlags.canSelectAll) editItems.push({ label: menuStrings.selectAll, click: () => webContents.selectAll() });
+  } else {
+    const hasSelection = !!String(params.selectionText || '').trim();
+    if (hasSelection) {
+      editItems.push({ label: menuStrings.copy, click: () => webContents.copy() });
+    }
+    if (editFlags.canSelectAll) {
+      editItems.push({ label: menuStrings.selectAll, click: () => webContents.selectAll() });
+    }
+  }
+  sections.push(editItems);
+
+  const linkAndMediaItems = [];
+  if (includeLinkActions && params.linkURL) {
+    if (isNavigableBrowserUrl(params.linkURL)) {
+      linkAndMediaItems.push({
+        label: uiStrings.contextMenuOpenLinkInNewTab,
+        click: () => {
+          const tab = createTab(params.linkURL);
+          setActiveTab(tab.id);
+        }
+      });
+    }
+    linkAndMediaItems.push({
+      label: uiStrings.contextMenuCopyLink,
+      click: () => clipboard.writeText(params.linkURL)
+    });
+  }
+
+  if (includeImageActions && params.mediaType === 'image' && isSafeBrowserUrl(params.srcURL)) {
+    linkAndMediaItems.push({
+      label: uiStrings.contextMenuOpenImageInNewTab,
+      click: () => {
+        const tab = createTab(params.srcURL);
+        setActiveTab(tab.id);
+      }
+    });
+    linkAndMediaItems.push({
+      label: uiStrings.contextMenuCopyImage,
+      click: () => clipboard.writeText(params.srcURL)
+    });
+    linkAndMediaItems.push({
+      label: uiStrings.contextMenuSaveImage,
+      click: () => webContents.downloadURL(params.srcURL)
+    });
+  }
+  sections.push(linkAndMediaItems);
+
+  const selectionText = String(params.selectionText || '').trim();
+  if (includeSearch && selectionText) {
+    sections.push([{
+      label: formatLocalizedString(uiStrings.contextMenuSearchWeb, {
+        text: getContextMenuSelectionText(selectionText)
+      }),
+      click: () => {
+        const tab = createTab(`${SEARCH_FALLBACK_PREFIX}${encodeURIComponent(selectionText)}`);
+        setActiveTab(tab.id);
+      }
+    }]);
+  }
+
+  if (includeNavigation) {
+    sections.push([
+      {
+        label: uiStrings.back,
+        enabled: webContents.canGoBack(),
+        click: () => webContents.goBack()
+      },
+      {
+        label: uiStrings.forward,
+        enabled: webContents.canGoForward(),
+        click: () => webContents.goForward()
+      },
+      {
+        label: uiStrings.reloadPage,
+        click: () => webContents.reload()
+      }
+    ]);
+  }
+
+  if (includeInspect) {
+    sections.push([{
+      label: uiStrings.contextMenuInspectElement,
+      click: () => webContents.inspectElement(params.x ?? 0, params.y ?? 0)
+    }]);
+  }
+
+  return joinMenuSections(sections);
+}
+
+function showContextMenu(webContents, params, options) {
+  if (!win) return;
+  const template = buildContextMenuTemplate(webContents, params, options);
+  if (!template.length) return;
+  Menu.buildFromTemplate(template).popup({ window: win });
 }
 
 function getDisplayHostname(rawUrl) {
@@ -2082,7 +2261,7 @@ function loadStore() {
   // defaults
   if (!store.settings) store.settings = {};
   if (!store.settings.theme) store.settings.theme = 'dark';
-  store.settings.lang = normalizeLang(store.settings.lang || DEFAULT_LANG);
+  store.settings.lang = normalizeLang(store.settings.lang || getSystemPreferredLanguage() || DEFAULT_LANG);
   store.settings.translateTargetLang = normalizeLang(store.settings.translateTargetLang || store.settings.lang || DEFAULT_LANG);
   if (!store.settings.homepage) store.settings.homepage = DEFAULT_CUSTOM_HOMEPAGE;
   const normalizedHomepage = resolveBrowserUrl(store.settings.homepage, {
@@ -2159,6 +2338,61 @@ function refreshBuiltinHomepageTabs() {
     });
 }
 
+function getSystemPreferredLanguage() {
+  const candidates = [];
+  try {
+    candidates.push(...app.getPreferredSystemLanguages());
+  } catch {
+    // Ignore unsupported Electron/OS combinations.
+  }
+
+  try {
+    candidates.push(app.getLocale());
+  } catch {
+    // Ignore locale read failures and fall back to DEFAULT_LANG.
+  }
+
+  return normalizeLang(candidates);
+}
+
+function configureSpellCheckerLanguages(sess, lang = store.settings?.lang) {
+  if (!sess || typeof sess.setSpellCheckerLanguages !== 'function') return;
+
+  const available = Array.isArray(sess.availableSpellCheckerLanguages)
+    ? sess.availableSpellCheckerLanguages
+    : [];
+  if (!available.length) return;
+
+  const normalizedLang = normalizeLang(lang || DEFAULT_LANG);
+  const langConfig = getLangConfig(normalizedLang);
+  const candidates = [
+    normalizedLang,
+    langConfig.htmlLang,
+    String(langConfig.htmlLang || '').split('-')[0]
+  ]
+    .filter(Boolean)
+    .map(value => String(value).replace(/_/g, '-').toLowerCase());
+
+  const exactMatch = available.find((value) => candidates.includes(String(value).toLowerCase()));
+  const prefixMatch = available.find((value) => {
+    const lower = String(value).toLowerCase();
+    return candidates.some(candidate => lower.startsWith(`${candidate}-`));
+  });
+  const fallbackMatch = available.find((value) => {
+    const lower = String(value).toLowerCase();
+    return candidates.some(candidate => lower.split('-')[0] === candidate.split('-')[0]);
+  });
+
+  const selected = exactMatch || prefixMatch || fallbackMatch;
+  if (!selected) return;
+
+  try {
+    sess.setSpellCheckerLanguages([selected]);
+  } catch (error) {
+    console.warn(`Failed to set spellchecker language ${selected}:`, error.message);
+  }
+}
+
 /* ---------- WebAssembly & Performance ---------- */
 app.commandLine.appendSwitch('enable-features', 'WebAssembly,WebAssemblyStreaming,SharedArrayBuffer');
 app.commandLine.appendSwitch('enable-webassembly');
@@ -2216,6 +2450,7 @@ async function createWindow() {
   const customUA = `AG Browser/8.0 Chrome/${chromeVersion} ${defaultUA.replace(/Electron\/\S+\s*/g, '')}`;
   sess.setUserAgent(customUA);
   configureSessionSecurity(sess);
+  configureSpellCheckerLanguages(sess);
 
   wireDownloads(sess);
 
@@ -2270,6 +2505,16 @@ async function createWindow() {
 
   // Mouse back/forward buttons (4 & 5) on BrowserView
   // Handled via before-input-event on each view -- see createTab
+
+  win.webContents.on('context-menu', (_event, params) => {
+    showContextMenu(win.webContents, params, {
+      includeNavigation: false,
+      includeInspect: false,
+      includeLinkActions: false,
+      includeImageActions: false,
+      includeSearch: !!String(params.selectionText || '').trim()
+    });
+  });
 
   // Restore pinned tabs
   const pinnedUrls = store.pinnedTabs || [];
@@ -2538,6 +2783,16 @@ function createTab(url, pinned = false) {
         if (view.webContents.canGoForward()) view.webContents.goForward();
       }
     }
+  });
+
+  view.webContents.on('context-menu', (_event, params) => {
+    showContextMenu(view.webContents, params, {
+      includeNavigation: true,
+      includeInspect: true,
+      includeLinkActions: true,
+      includeImageActions: true,
+      includeSearch: !!String(params.selectionText || '').trim()
+    });
   });
 
   const id = nextId++;
@@ -3114,6 +3369,9 @@ ipcMain.handle('settings:set', (_e, newSettings = {}) => {
   Object.assign(store.settings, newSettings);
   saveStore();
   buildAppMenu();
+  if (win) {
+    configureSpellCheckerLanguages(win.webContents.session);
+  }
   refreshBuiltinHomepageTabs();
   return store.settings;
 });
