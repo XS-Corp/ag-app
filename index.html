@@ -146,6 +146,13 @@
           </div>
         </div>
       </div>
+      <div class="setting-row setting-row-top setting-row-block">
+        <label for="permissionRulesList" data-i18n="permissionDefaults">Permission behavior</label>
+        <div class="setting-control setting-control-stack setting-control-wide">
+          <div class="setting-hint" data-i18n="permissionDefaultsHint">Choose the default action for each permission. Ask shows the browser prompt.</div>
+          <div id="permissionRulesList" class="permission-rules-list"></div>
+        </div>
+      </div>
       <div class="setting-row">
         <label data-i18n="sitePermissions">Site permissions</label>
         <div class="setting-control">
@@ -165,7 +172,7 @@
       </div>
       <div class="permission-body">
         <div id="permissionMessage" class="permission-message"></div>
-        <div class="permission-origin-row">
+        <div id="permissionOriginRow" class="permission-origin-row">
           <span id="permissionOriginLabel" class="permission-origin-label"></span>
           <span id="permissionOriginValue" class="permission-origin-value"></span>
         </div>

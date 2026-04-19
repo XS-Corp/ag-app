@@ -73,6 +73,7 @@ Feel free to fork, contribute, or suggest improvements.
 ## ⚠️ Warning
 
 AG Browser tested only on ARM64 macOS and can be unstable on other platforms.
+Platform passkeys on macOS require a signed build that includes the `com.apple.developer.web-browser.public-key-credential` entitlement, so they may not be available in plain dev-mode runs.
 
 ---
 

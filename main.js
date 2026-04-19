@@ -10,7 +10,8 @@ const {
   globalShortcut,
   Menu,
   desktopCapturer,
-  systemPreferences
+  systemPreferences,
+  webContents: electronWebContents
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -48,6 +49,7 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const APP_ROOT = __dirname;
+const BROWSER_PRELOAD_FILE = path.join(APP_ROOT, 'browser-preload.js');
 const EMPTY_EXT_THEME = '/* no extension theme active */\n';
 const SEARCH_FALLBACK_PREFIX = 'https://www.google.com/search?q=';
 const GOOGLE_TRANSLATE_API_URL = 'https://translate.googleapis.com/translate_a/t';
@@ -60,12 +62,33 @@ const LOCAL_HOST_INPUT_RE = /^(localhost|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:[/?
 const LOOPBACK_HOST_RE = /^(localhost|127(?:\.\d{1,3}){3}|::1|\[::1\])$/i;
 const DISPLAY_SOURCE_THUMBNAIL_SIZE = { width: 360, height: 220 };
 const AUTO_ALLOWED_PERMISSIONS = new Set(['fullscreen', 'clipboard-sanitized-write']);
-const ALWAYS_ALLOW_PERMISSIONS = new Set(['storage-access', 'top-level-storage-access']);
-const REQUESTABLE_PERMISSION_CHECKS = new Set(['media', 'storage-access', 'top-level-storage-access']);
+const ALWAYS_ALLOW_PERMISSIONS = new Set();
+const REQUESTABLE_PERMISSION_CHECKS = new Set(['storage-access', 'top-level-storage-access']);
+const DEFAULT_PERMISSION_RULES = Object.freeze({
+  camera: 'ask',
+  microphone: 'ask',
+  displayCapture: 'ask',
+  fileSystem: 'ask',
+  cookies: 'ask',
+  canvasRead: 'ask',
+  geolocation: 'ask',
+  notifications: 'ask',
+  clipboardRead: 'ask',
+  idleDetection: 'ask',
+  openExternal: 'ask',
+  speakerSelection: 'ask',
+  storageAccess: 'ask',
+  windowManagement: 'ask',
+  keyboardLock: 'ask'
+});
+const VALID_PERMISSION_RULES = new Set(['ask', 'allow', 'deny']);
+const WEBRTC_IP_HANDLING_POLICY = 'default_public_interface_only';
 const PROMPTED_PERMISSIONS = new Set([
   'media',
   'display-capture',
   'fileSystem',
+  'cookies',
+  'canvas-read',
   'geolocation',
   'notifications',
   'clipboard-read',
@@ -94,6 +117,9 @@ let activeHtmlOverridePath = null;
 let nextPermissionPromptId = 1;
 let permissionPromptQueue = Promise.resolve();
 const pendingPermissionPrompts = new Map();
+const pendingSynchronousPermissionPrompts = new Set();
+const sessionPermissionDecisions = new Map();
+const configuredSessions = new WeakSet();
 const MAX_HISTORY_ITEMS = 36;
 const HOMEPAGE_SECTION_ITEMS = 8;
 const BUILTIN_HOME_QUICK_LINKS = [
@@ -1411,9 +1437,65 @@ function getRequestOrigin(details = {}) {
   );
 }
 
+function withPermissionContext(webContents, details = {}, requestingOrigin = '') {
+  const resolvedRequestingOrigin = requestingOrigin || getRequestOrigin(details);
+  const resolvedEmbeddingOrigin = getOriginFromUrl(details.embeddingOrigin || webContents?.getURL?.());
+
+  return {
+    ...details,
+    requestingOrigin: resolvedRequestingOrigin,
+    ...(resolvedEmbeddingOrigin ? { embeddingOrigin: resolvedEmbeddingOrigin } : {})
+  };
+}
+
+function getStorageAccessPermissionKey(permission, details = {}) {
+  const baseKey = permission === 'top-level-storage-access'
+    ? 'topLevelStorageAccess'
+    : 'storageAccess';
+  const embeddingOrigin = getOriginFromUrl(details.embeddingOrigin);
+  const requestingOrigin = getRequestOrigin(details);
+
+  // Storage Access API grants should stay scoped to the site where the
+  // third-party content is embedded instead of silently carrying over.
+  if (!embeddingOrigin || embeddingOrigin === requestingOrigin) {
+    return baseKey;
+  }
+
+  return `${baseKey}::${embeddingOrigin}`;
+}
+
+function getCookiePermissionKey(details = {}) {
+  const requestingOrigin = getRequestOrigin(details);
+  const embeddingOrigin = getOriginFromUrl(details.embeddingOrigin);
+
+  // Keep third-party cookie grants tied to the site where the request happens.
+  if (!embeddingOrigin || embeddingOrigin === requestingOrigin) {
+    return 'cookies';
+  }
+
+  return `cookies::${embeddingOrigin}`;
+}
+
 function getSiteDisplayName(origin) {
   const parsed = safeParseUrl(origin);
   return parsed?.hostname || origin || 'Unknown site';
+}
+
+function normalizePermissionRule(rule) {
+  return VALID_PERMISSION_RULES.has(rule) ? rule : 'ask';
+}
+
+function normalizePermissionRules(rules = {}) {
+  const normalized = { ...DEFAULT_PERMISSION_RULES };
+  if (!rules || typeof rules !== 'object') {
+    return normalized;
+  }
+
+  for (const key of Object.keys(DEFAULT_PERMISSION_RULES)) {
+    normalized[key] = normalizePermissionRule(rules[key]);
+  }
+
+  return normalized;
 }
 
 function ensurePermissionStore() {
@@ -1456,7 +1538,45 @@ function setStoredPermissionDecision(origin, key, decision) {
 
 function clearStoredPermissionDecisions() {
   store.permissions = {};
+  sessionPermissionDecisions.clear();
   saveStore();
+}
+
+function getPermissionDecisionCacheKey(permission, details = {}) {
+  const origin = getRequestOrigin(details);
+  const keys = getPermissionStorageKeys(permission, details);
+  if (!origin || !keys.length) return '';
+  return `${origin}::${keys.slice().sort().join('|')}`;
+}
+
+function getPermissionDecisionCacheKeys(permission, details = {}) {
+  const origin = getRequestOrigin(details);
+  const keys = getPermissionStorageKeys(permission, details);
+  if (!origin || !keys.length) return [];
+  return Array.from(new Set(keys)).map((key) => `${origin}::${key}`);
+}
+
+function getSessionPermissionResult(permission, details = {}) {
+  const cacheKeys = getPermissionDecisionCacheKeys(permission, details);
+  if (!cacheKeys.length) return null;
+
+  let sawAllow = false;
+  for (const cacheKey of cacheKeys) {
+    if (!sessionPermissionDecisions.has(cacheKey)) return null;
+    const decision = sessionPermissionDecisions.get(cacheKey);
+    if (decision === false) return false;
+    if (decision === true) sawAllow = true;
+  }
+
+  return sawAllow ? true : null;
+}
+
+function setSessionPermissionDecision(permission, details, allowed) {
+  const cacheKeys = getPermissionDecisionCacheKeys(permission, details);
+  if (!cacheKeys.length) return;
+  cacheKeys.forEach((cacheKey) => {
+    sessionPermissionDecisions.set(cacheKey, !!allowed);
+  });
 }
 
 function queuePermissionPrompt(task) {
@@ -1506,6 +1626,52 @@ function getPermissionStorageKeys(permission, details = {}) {
       return ['displayCapture'];
     case 'fileSystem':
       return [details.fileAccessType === 'writable' ? 'fileSystemWrite' : 'fileSystemRead'];
+    case 'cookies':
+      return [getCookiePermissionKey(details)];
+    case 'canvas-read':
+      return ['canvasRead'];
+    case 'geolocation':
+      return ['geolocation'];
+    case 'notifications':
+      return ['notifications'];
+    case 'clipboard-read':
+      return ['clipboardRead'];
+    case 'idle-detection':
+      return ['idleDetection'];
+    case 'openExternal':
+      return ['openExternal'];
+    case 'speaker-selection':
+      return ['speakerSelection'];
+    case 'storage-access':
+    case 'top-level-storage-access':
+      return [getStorageAccessPermissionKey(permission, details)];
+    case 'window-management':
+      return ['windowManagement'];
+    case 'keyboardLock':
+      return ['keyboardLock'];
+    default:
+      return [];
+  }
+}
+
+function getPermissionRuleKeys(permission, details = {}) {
+  switch (permission) {
+    case 'media': {
+      const wantsAudio = details.mediaTypes?.includes('audio') || details.mediaType === 'audio';
+      const wantsVideo = details.mediaTypes?.includes('video') || details.mediaType === 'video';
+      const keys = [];
+      if (wantsVideo || !wantsAudio) keys.push('camera');
+      if (wantsAudio || !wantsVideo) keys.push('microphone');
+      return Array.from(new Set(keys));
+    }
+    case 'display-capture':
+      return ['displayCapture'];
+    case 'fileSystem':
+      return ['fileSystem'];
+    case 'cookies':
+      return ['cookies'];
+    case 'canvas-read':
+      return ['canvasRead'];
     case 'geolocation':
       return ['geolocation'];
     case 'notifications':
@@ -1530,6 +1696,53 @@ function getPermissionStorageKeys(permission, details = {}) {
   }
 }
 
+function getConfiguredPermissionResult(permission, details = {}) {
+  const rules = normalizePermissionRules(store.settings?.permissionRules);
+  const keys = getPermissionRuleKeys(permission, details);
+  if (!keys.length) return null;
+
+  let sawAllow = false;
+  for (const key of keys) {
+    const rule = normalizePermissionRule(rules[key]);
+    if (rule === 'deny') return false;
+    if (rule === 'allow') {
+      sawAllow = true;
+      continue;
+    }
+    return null;
+  }
+
+  return sawAllow ? true : null;
+}
+
+function getExplicitPermissionDecision(permission, details = {}) {
+  const autoDecision = getAutoPermissionDecision(permission, details);
+  if (autoDecision !== null) {
+    if (autoDecision && permission === 'media') {
+      return canPotentiallyRequestMediaAccess(details);
+    }
+    return autoDecision;
+  }
+
+  const configuredDecision = getConfiguredPermissionResult(permission, details);
+  if (configuredDecision !== null) {
+    if (configuredDecision && permission === 'media') {
+      return canPotentiallyRequestMediaAccess(details);
+    }
+    return configuredDecision;
+  }
+
+  const cachedDecision = getCachedPermissionResult(permission, details);
+  if (cachedDecision !== null) {
+    if (cachedDecision && permission === 'media') {
+      return canPotentiallyRequestMediaAccess(details);
+    }
+    return cachedDecision;
+  }
+
+  return null;
+}
+
 function getStoredPermissionResult(permission, details = {}) {
   const origin = getRequestOrigin(details);
   const keys = getPermissionStorageKeys(permission, details);
@@ -1543,6 +1756,12 @@ function getStoredPermissionResult(permission, details = {}) {
     if (!stored) return null;
   }
   return sawAllow ? true : null;
+}
+
+function getCachedPermissionResult(permission, details = {}) {
+  const sessionDecision = getSessionPermissionResult(permission, details);
+  if (sessionDecision !== null) return sessionDecision;
+  return getStoredPermissionResult(permission, details);
 }
 
 function persistPermissionDecision(permission, details, allowed) {
@@ -1568,6 +1787,10 @@ function getPermissionLabelKey(permission, details = {}) {
       return 'permissionLabelScreen';
     case 'fileSystem':
       return 'permissionLabelFiles';
+    case 'cookies':
+      return 'permissionLabelCookies';
+    case 'canvas-read':
+      return 'permissionLabelCanvasData';
     case 'geolocation':
       return 'permissionLabelLocation';
     case 'notifications':
@@ -1609,6 +1832,34 @@ function getPermissionPromptNote(permission, details = {}, strings = getCurrentU
 
   if (permission === 'storage-access' || permission === 'top-level-storage-access') {
     return strings.permissionStorageAccessNote || '';
+  }
+
+  if (permission === 'cookies') {
+    const embeddingOrigin = getOriginFromUrl(details.embeddingOrigin);
+    const requestingOrigin = getRequestOrigin(details);
+    const parts = [];
+
+    if (embeddingOrigin && requestingOrigin && embeddingOrigin !== requestingOrigin) {
+      parts.push(formatString(strings.permissionThirdPartyCookiesNote, {
+        site: getSiteDisplayName(embeddingOrigin)
+      }));
+    } else {
+      parts.push(strings.permissionCookiesNote);
+    }
+
+    if (details.source && strings.permissionPromptSource) {
+      parts.push(formatString(strings.permissionPromptSource, { source: details.source }));
+    }
+
+    return parts.filter(Boolean).join(' ');
+  }
+
+  if (permission === 'canvas-read') {
+    const parts = [strings.permissionCanvasReadNote];
+    if (details.source && strings.permissionPromptSource) {
+      parts.push(formatString(strings.permissionPromptSource, { source: details.source }));
+    }
+    return parts.filter(Boolean).join(' ');
   }
 
   return '';
@@ -1672,13 +1923,56 @@ function buildDisplaySourcePromptPayload(request, sources) {
   };
 }
 
+function buildPermissionNoticePayload(message) {
+  const strings = getCurrentUiStrings();
+
+  return {
+    kind: 'notice',
+    title: strings.sitePermissions || 'Site permissions',
+    site: '',
+    origin: '',
+    originLabel: '',
+    message,
+    note: '',
+    allowLabel: strings.permissionOk || 'OK',
+    denyLabel: '',
+    alwaysAllowLabel: '',
+    canRemember: false
+  };
+}
+
 async function showPermissionWarning(message) {
   if (!message || !win || win.isDestroyed()) return;
-  await dialog.showMessageBox(win, {
-    type: 'warning',
-    title: 'AG Browser',
-    message
-  });
+  await promptInUi(buildPermissionNoticePayload(message));
+}
+
+function queueSynchronousPermissionPrompt(webContents, permission, details = {}) {
+  const cacheKey = getPermissionDecisionCacheKey(permission, details)
+    || `${permission}::${getRequestOrigin(details)}::${details.source || ''}`;
+  if (!cacheKey || pendingSynchronousPermissionPrompts.has(cacheKey)) {
+    return;
+  }
+
+  pendingSynchronousPermissionPrompts.add(cacheKey);
+  void promptInUi(buildPermissionPromptPayload(permission, details))
+    .then((response) => {
+      const allowed = response?.action === 'allow' || response?.action === 'allow-always';
+
+      if (allowed) {
+        setSessionPermissionDecision(permission, details, true);
+      } else {
+        setSessionPermissionDecision(permission, details, false);
+      }
+
+      if (response?.remember && allowed) {
+        persistPermissionDecision(permission, details, true);
+      } else if (response?.remember && !allowed) {
+        persistPermissionDecision(permission, details, false);
+      }
+    })
+    .finally(() => {
+      pendingSynchronousPermissionPrompts.delete(cacheKey);
+    });
 }
 
 async function ensureSystemMediaAccess(mediaType) {
@@ -1751,6 +2045,8 @@ function canPromptPermission(permission, details = {}) {
     case 'media':
     case 'display-capture':
     case 'fileSystem':
+    case 'cookies':
+    case 'canvas-read':
     case 'geolocation':
     case 'notifications':
     case 'clipboard-read':
@@ -1774,16 +2070,33 @@ async function requestPermissionFromUser(permission, details = {}) {
   const autoDecision = getAutoPermissionDecision(permission, details);
   if (autoDecision !== null) {
     if (autoDecision && permission === 'media') {
-      return ensureMediaSystemAccess(details);
+      const systemAllowed = await ensureMediaSystemAccess(details);
+      setSessionPermissionDecision(permission, details, systemAllowed);
+      return systemAllowed;
     }
+    setSessionPermissionDecision(permission, details, autoDecision);
     return autoDecision;
   }
 
-  const storedDecision = getStoredPermissionResult(permission, details);
+  const configuredDecision = getConfiguredPermissionResult(permission, details);
+  if (configuredDecision !== null) {
+    if (configuredDecision && permission === 'media') {
+      const systemAllowed = await ensureMediaSystemAccess(details);
+      setSessionPermissionDecision(permission, details, systemAllowed);
+      return systemAllowed;
+    }
+    setSessionPermissionDecision(permission, details, configuredDecision);
+    return configuredDecision;
+  }
+
+  const storedDecision = getCachedPermissionResult(permission, details);
   if (storedDecision !== null) {
     if (storedDecision && permission === 'media') {
-      return ensureMediaSystemAccess(details);
+      const systemAllowed = await ensureMediaSystemAccess(details);
+      setSessionPermissionDecision(permission, details, systemAllowed);
+      return systemAllowed;
     }
+    setSessionPermissionDecision(permission, details, storedDecision);
     return storedDecision;
   }
   if (!PROMPTED_PERMISSIONS.has(permission) || !canPromptPermission(permission, details)) return false;
@@ -1791,8 +2104,11 @@ async function requestPermissionFromUser(permission, details = {}) {
   const response = await promptInUi(buildPermissionPromptPayload(permission, details));
   const allowed = response?.action === 'allow' || response?.action === 'allow-always';
 
+  setSessionPermissionDecision(permission, details, allowed);
+
   if (allowed && permission === 'media') {
     const systemAllowed = await ensureMediaSystemAccess(details);
+    setSessionPermissionDecision(permission, details, systemAllowed);
     if (!systemAllowed) return false;
   }
 
@@ -1809,38 +2125,149 @@ async function requestPermissionFromUser(permission, details = {}) {
 }
 
 function getPermissionCheckDecision(permission, details = {}) {
-  const autoDecision = getAutoPermissionDecision(permission, details);
-  if (autoDecision !== null) {
-    if (autoDecision && permission === 'media') {
-      return canPotentiallyRequestMediaAccess(details);
-    }
-    return autoDecision;
-  }
-
   if (!canPromptPermission(permission, details)) return false;
 
-  const storedDecision = getStoredPermissionResult(permission, details);
-  if (storedDecision === false) return false;
-  if (storedDecision === true) {
-    if (permission === 'media') {
-      return canPotentiallyRequestMediaAccess(details);
-    }
-    return true;
+  const explicitDecision = getExplicitPermissionDecision(permission, details);
+  if (explicitDecision !== null) {
+    return explicitDecision;
   }
 
   if (REQUESTABLE_PERMISSION_CHECKS.has(permission)) {
-    if (permission === 'media') {
-      return canPotentiallyRequestMediaAccess(details);
-    }
     return true;
   }
 
+  // For the remaining permissions we only return true once the user or
+  // settings explicitly allow the request; otherwise Chromium treats the
+  // check result as a final deny and no prompt is shown.
   return false;
+}
+
+function getPermissionState(permission, details = {}) {
+  if (!canPromptPermission(permission, details)) return 'denied';
+
+  const explicitDecision = getExplicitPermissionDecision(permission, details);
+  if (explicitDecision === true) return 'granted';
+  if (explicitDecision === false) return 'denied';
+
+  return PROMPTED_PERMISSIONS.has(permission) || REQUESTABLE_PERMISSION_CHECKS.has(permission)
+    ? 'prompt'
+    : 'denied';
+}
+
+function requestSynchronousPermissionFromUser(webContents, permission, details = {}) {
+  const requestDetails = withPermissionContext(webContents, details);
+  const autoDecision = getAutoPermissionDecision(permission, requestDetails);
+  if (autoDecision !== null) {
+    return autoDecision;
+  }
+
+  const configuredDecision = getConfiguredPermissionResult(permission, requestDetails);
+  if (configuredDecision !== null) {
+    return configuredDecision;
+  }
+
+  const cachedDecision = getCachedPermissionResult(permission, requestDetails);
+  if (cachedDecision !== null) {
+    return cachedDecision;
+  }
+
+  if (!PROMPTED_PERMISSIONS.has(permission) || !canPromptPermission(permission, requestDetails)) {
+    return false;
+  }
+
+  queueSynchronousPermissionPrompt(webContents, permission, requestDetails);
+  return false;
+}
+
+function findHeaderName(headers, expectedName) {
+  return Object.keys(headers || {}).find((name) => String(name).toLowerCase() === expectedName.toLowerCase()) || '';
+}
+
+function getRequestWebContents(details = {}) {
+  if (!Number.isInteger(details.webContentsId)) return null;
+  try {
+    return electronWebContents.fromId(details.webContentsId);
+  } catch {
+    return null;
+  }
+}
+
+function isProtectedBrowserTraffic(details = {}, webContents) {
+  if (!isSafeBrowserUrl(details.url)) return false;
+  if (details.resourceType === 'mainFrame') return true;
+  if (isSafeBrowserUrl(webContents?.getURL?.())) return true;
+  return isSafeBrowserUrl(details.referrer);
+}
+
+function buildCookieTrafficPermissionDetails(details = {}, webContents, source) {
+  const requestOrigin = getOriginFromUrl(details.url);
+  const embeddingOrigin = details.resourceType === 'mainFrame'
+    ? requestOrigin
+    : getOriginFromUrl(webContents?.getURL?.() || details.referrer);
+
+  return withPermissionContext(webContents, {
+    requestingUrl: details.url,
+    requestingOrigin: requestOrigin,
+    securityOrigin: requestOrigin,
+    embeddingOrigin,
+    source
+  });
+}
+
+function applyRequestPrivacyGuards(details = {}, callback) {
+  const requestHeaders = { ...(details.requestHeaders || {}) };
+  requestHeaders.DNT = '1';
+  requestHeaders['Sec-GPC'] = '1';
+
+  const xClientDataHeader = findHeaderName(requestHeaders, 'X-Client-Data');
+  if (xClientDataHeader) {
+    delete requestHeaders[xClientDataHeader];
+  }
+
+  const webContents = getRequestWebContents(details);
+  const cookieHeader = findHeaderName(requestHeaders, 'Cookie');
+  if (cookieHeader && isProtectedBrowserTraffic(details, webContents)) {
+    const allowed = requestSynchronousPermissionFromUser(
+      webContents,
+      'cookies',
+      buildCookieTrafficPermissionDetails(details, webContents, 'Cookie request header')
+    );
+
+    if (!allowed) {
+      delete requestHeaders[cookieHeader];
+    }
+  }
+
+  callback({ requestHeaders });
+}
+
+function applyResponsePrivacyGuards(details = {}, callback) {
+  const responseHeaders = { ...(details.responseHeaders || {}) };
+  const setCookieHeader = findHeaderName(responseHeaders, 'Set-Cookie');
+  const webContents = getRequestWebContents(details);
+
+  if (setCookieHeader && isProtectedBrowserTraffic(details, webContents)) {
+    const allowed = requestSynchronousPermissionFromUser(
+      webContents,
+      'cookies',
+      buildCookieTrafficPermissionDetails(details, webContents, 'Set-Cookie response header')
+    );
+
+    if (!allowed) {
+      delete responseHeaders[setCookieHeader];
+    }
+  }
+
+  callback({ responseHeaders });
 }
 
 async function handleDisplayMediaRequest(request, callback) {
   const origin = getOriginFromUrl(request.securityOrigin);
   const strings = getCurrentUiStrings();
+  const requestDetails = withPermissionContext(null, {
+    securityOrigin: request.securityOrigin,
+    requestingOrigin: origin
+  });
 
   if (!origin || !isTrustworthyPermissionOrigin(origin) || request.userGesture === false) {
     if (request.userGesture === false) {
@@ -1850,7 +2277,13 @@ async function handleDisplayMediaRequest(request, callback) {
     return;
   }
 
-  if (getStoredPermissionDecision(origin, 'displayCapture') === 'deny') {
+  const configuredDecision = getConfiguredPermissionResult('display-capture', requestDetails);
+  if (configuredDecision === false) {
+    callback({});
+    return;
+  }
+
+  if (configuredDecision === null && getStoredPermissionDecision(origin, 'displayCapture') === 'deny') {
     callback({});
     return;
   }
@@ -1900,8 +2333,12 @@ async function handleDisplayMediaRequest(request, callback) {
 }
 
 function configureSessionSecurity(sess) {
+  if (configuredSessions.has(sess)) return;
+  configuredSessions.add(sess);
+
   sess.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    void requestPermissionFromUser(permission, { ...details, requestingOrigin: getRequestOrigin(details) })
+    const requestDetails = withPermissionContext(webContents, details);
+    void requestPermissionFromUser(permission, requestDetails)
       .then((allowed) => callback(allowed))
       .catch((error) => {
         console.warn(`Permission request failed for ${permission}:`, error.message);
@@ -1920,9 +2357,25 @@ function configureSessionSecurity(sess) {
 
   if (typeof sess.setPermissionCheckHandler === 'function') {
     sess.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details = {}) => {
-      const requestDetails = { ...details, requestingOrigin };
+      const requestDetails = withPermissionContext(_webContents, details, requestingOrigin);
       return getPermissionCheckDecision(permission, requestDetails);
     });
+  }
+
+  if (sess.webRequest) {
+    const filter = { urls: ['http://*/*', 'https://*/*'] };
+    sess.webRequest.onBeforeSendHeaders(filter, applyRequestPrivacyGuards);
+    sess.webRequest.onHeadersReceived(filter, applyResponsePrivacyGuards);
+  }
+}
+
+function configureWebContentsPrivacy(webContents) {
+  if (!webContents || typeof webContents.setWebRTCIPHandlingPolicy !== 'function') return;
+
+  try {
+    webContents.setWebRTCIPHandlingPolicy(WEBRTC_IP_HANDLING_POLICY);
+  } catch (error) {
+    console.warn(`Failed to set WebRTC IP handling policy: ${error.message}`);
   }
 }
 
@@ -2263,6 +2716,7 @@ function loadStore() {
   if (!store.settings.theme) store.settings.theme = 'dark';
   store.settings.lang = normalizeLang(store.settings.lang || getSystemPreferredLanguage() || DEFAULT_LANG);
   store.settings.translateTargetLang = normalizeLang(store.settings.translateTargetLang || store.settings.lang || DEFAULT_LANG);
+  store.settings.permissionRules = normalizePermissionRules(store.settings.permissionRules);
   if (!store.settings.homepage) store.settings.homepage = DEFAULT_CUSTOM_HOMEPAGE;
   const normalizedHomepage = resolveBrowserUrl(store.settings.homepage, {
     fallbackUrl: DEFAULT_CUSTOM_HOMEPAGE,
@@ -2448,8 +2902,13 @@ async function createWindow() {
   const defaultUA = sess.getUserAgent();
   const chromeVersion = process.versions.chrome || '131.0.0.0';
   const customUA = `AG Browser/8.0 Chrome/${chromeVersion} ${defaultUA.replace(/Electron\/\S+\s*/g, '')}`;
+  const sessionPreloads = typeof sess.getPreloads === 'function' ? sess.getPreloads() : [];
   sess.setUserAgent(customUA);
+  if (typeof sess.setPreloads === 'function') {
+    sess.setPreloads(Array.from(new Set([...sessionPreloads, BROWSER_PRELOAD_FILE])));
+  }
   configureSessionSecurity(sess);
+  configureWebContentsPrivacy(win.webContents);
   configureSpellCheckerLanguages(sess);
 
   wireDownloads(sess);
@@ -2734,6 +3193,7 @@ function createTab(url, pinned = false) {
       webSecurity: true
     }
   });
+  configureWebContentsPrivacy(view.webContents);
 
   view.webContents.setWindowOpenHandler(({ url }) => {
     if (!isNavigableBrowserUrl(url)) {
@@ -3335,6 +3795,7 @@ ipcMain.handle('ext:openPopup', async (_e, extId) => {
     width: 400, height: 500, parent: win, resizable: true, frame: true, title: ext.name,
     webPreferences: { contextIsolation: true, sandbox: true }
   });
+  configureWebContentsPrivacy(popupWin.webContents);
   popupWin.loadFile(path.join(ext.path, popup));
   return true;
 });
@@ -3342,6 +3803,29 @@ ipcMain.handle('ext:openPopup', async (_e, extId) => {
 // Permissions UI
 ipcMain.handle('permission:respond', (_e, response = {}) => {
   return resolvePendingPermissionPrompt(response.id, response);
+});
+ipcMain.handle('permission:request', async (event, payload = {}) => {
+  const permission = String(payload.permission || '');
+  const details = payload.details && typeof payload.details === 'object' ? payload.details : {};
+  const requestDetails = withPermissionContext(event.sender, details);
+  return requestPermissionFromUser(permission, requestDetails);
+});
+ipcMain.on('permission:sync-request', (event, payload = {}) => {
+  const permission = String(payload.permission || '');
+  const details = payload.details && typeof payload.details === 'object' ? payload.details : {};
+  event.returnValue = requestSynchronousPermissionFromUser(event.sender, permission, details);
+});
+ipcMain.on('permission:sync-check', (event, payload = {}) => {
+  const permission = String(payload.permission || '');
+  const details = payload.details && typeof payload.details === 'object' ? payload.details : {};
+  const requestDetails = withPermissionContext(event.sender, details);
+  event.returnValue = getExplicitPermissionDecision(permission, requestDetails);
+});
+ipcMain.on('permission:sync-state', (event, payload = {}) => {
+  const permission = String(payload.permission || '');
+  const details = payload.details && typeof payload.details === 'object' ? payload.details : {};
+  const requestDetails = withPermissionContext(event.sender, details);
+  event.returnValue = getPermissionState(permission, requestDetails);
 });
 ipcMain.handle('permissions:clear', () => {
   clearStoredPermissionDecisions();
@@ -3356,6 +3840,15 @@ ipcMain.handle('settings:set', (_e, newSettings = {}) => {
   }
   if (Object.prototype.hasOwnProperty.call(newSettings, 'translateTargetLang')) {
     newSettings.translateTargetLang = normalizeLang(newSettings.translateTargetLang);
+  }
+  if (Object.prototype.hasOwnProperty.call(newSettings, 'permissionRules')) {
+    const mergedPermissionRules = {
+      ...normalizePermissionRules(store.settings.permissionRules),
+      ...(newSettings.permissionRules && typeof newSettings.permissionRules === 'object'
+        ? newSettings.permissionRules
+        : {})
+    };
+    newSettings.permissionRules = normalizePermissionRules(mergedPermissionRules);
   }
   if (Object.prototype.hasOwnProperty.call(newSettings, 'homepageMode')) {
     newSettings.homepageMode = normalizeHomepageMode(newSettings.homepageMode);

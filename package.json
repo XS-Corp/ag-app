@@ -25,6 +25,7 @@
     "files": [
       "main.js",
       "builtin-home.js",
+      "browser-preload.js",
       "preload.js",
       "index.html",
       "i18n.js",
@@ -36,6 +37,7 @@
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "build/icon.icns",
+      "entitlements": "scripts/entitlements.mac.plist",
       "extendInfo": {
         "NSCameraUsageDescription": "AG Browser needs camera access so websites you approve can use video.",
         "NSMicrophoneUsageDescription": "AG Browser needs microphone access so websites you approve can use audio."

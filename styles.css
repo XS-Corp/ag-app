@@ -870,12 +870,22 @@ html[data-platform="darwin"] .window-frame__brand {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
+.settings-body::-webkit-scrollbar { width: 5px; }
+.settings-body::-webkit-scrollbar-track { background: transparent; }
+.settings-body::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
 .setting-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+.setting-row-block {
+  flex-direction: column;
+  align-items: stretch;
 }
 .setting-row-top {
   align-items: flex-start;
@@ -928,6 +938,46 @@ html[data-platform="darwin"] .window-frame__brand {
   font-size: 11.5px;
   line-height: 1.5;
   max-width: 420px;
+}
+
+.setting-row-block label {
+  white-space: normal;
+}
+
+.setting-row-block .setting-hint {
+  max-width: none;
+}
+
+.permission-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 4px;
+  width: 100%;
+}
+
+.permission-rule-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--tab-bg);
+}
+
+.permission-rule-name {
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--fg);
+}
+
+.permission-rule-select {
+  min-width: 168px;
 }
 
 .theme-btn {
@@ -1303,6 +1353,10 @@ body.is-rtl .setting-row {
   flex-direction: row-reverse;
 }
 
+body.is-rtl .setting-row-block {
+  flex-direction: column;
+}
+
 body.is-rtl .setting-row label,
 body.is-rtl .panel-title,
 body.is-rtl .item .title,
@@ -1318,6 +1372,10 @@ body.is-rtl .permission-note,
 body.is-rtl .permission-source-name,
 body.is-rtl .permission-source-kind {
   text-align: right;
+}
+
+body.is-rtl .permission-rule-item {
+  flex-direction: row-reverse;
 }
 
 body.is-rtl .item .row {
@@ -1422,6 +1480,16 @@ select:focus-visible {
     width: 100%;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .permission-rule-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .permission-rule-select {
+    width: 100%;
+    min-width: 0;
   }
 
   .toolbar {

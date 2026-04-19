@@ -67,6 +67,7 @@ function applyI18n() {
   selectHomepageMode.setAttribute('aria-label', t('homepageSource'));
   selectTranslateLanguage.setAttribute('aria-label', t('translateLanguage'));
   updateHomepageSettingsUi();
+  renderPermissionRules();
   renderTranslatePanel();
   applyWindowState(windowState);
 }
@@ -115,12 +116,14 @@ const selectHomepageMode = document.getElementById('selectHomepageMode');
 const homepageModeHint = document.getElementById('homepageModeHint');
 const inputHomepage = document.getElementById('inputHomepage');
 const btnSaveHomepage = document.getElementById('btnSaveHomepage');
+const permissionRulesList = document.getElementById('permissionRulesList');
 const btnClearPermissions = document.getElementById('btnClearPermissions');
 const permissionOverlay = document.getElementById('permissionOverlay');
 const permissionModal = document.getElementById('permissionModal');
 const permissionTitle = document.getElementById('permissionTitle');
 const permissionSite = document.getElementById('permissionSite');
 const permissionMessage = document.getElementById('permissionMessage');
+const permissionOriginRow = document.getElementById('permissionOriginRow');
 const permissionOriginLabel = document.getElementById('permissionOriginLabel');
 const permissionOriginValue = document.getElementById('permissionOriginValue');
 const permissionNote = document.getElementById('permissionNote');
@@ -149,6 +152,23 @@ let windowState = { isMaximized: false };
 let permissionRequestState = null;
 let selectedPermissionSourceId = null;
 const scheduledUiTasks = new Map();
+const PERMISSION_RULE_DEFINITIONS = [
+  { key: 'camera', labelKey: 'permissionLabelCamera' },
+  { key: 'microphone', labelKey: 'permissionLabelMicrophone' },
+  { key: 'displayCapture', labelKey: 'permissionLabelScreen' },
+  { key: 'fileSystem', labelKey: 'permissionLabelFiles' },
+  { key: 'cookies', labelKey: 'permissionLabelCookies' },
+  { key: 'canvasRead', labelKey: 'permissionLabelCanvasData' },
+  { key: 'geolocation', labelKey: 'permissionLabelLocation' },
+  { key: 'notifications', labelKey: 'permissionLabelNotifications' },
+  { key: 'clipboardRead', labelKey: 'permissionLabelClipboard' },
+  { key: 'idleDetection', labelKey: 'permissionLabelIdleDetection' },
+  { key: 'openExternal', labelKey: 'permissionLabelExternalApps' },
+  { key: 'speakerSelection', labelKey: 'permissionLabelSpeakerSelection' },
+  { key: 'storageAccess', labelKey: 'permissionLabelStorageAccess' },
+  { key: 'windowManagement', labelKey: 'permissionLabelWindowManagement' },
+  { key: 'keyboardLock', labelKey: 'permissionLabelKeyboardLock' }
+];
 
 /* ===== Helpers ===== */
 function isHttp(url) { return /^https?:\/\//i.test(url); }
@@ -179,6 +199,10 @@ function formatUiString(template, replacements = {}) {
     const value = replacements[key];
     return value == null ? '' : String(value);
   });
+}
+
+function normalizePermissionRuleValue(value) {
+  return value === 'allow' || value === 'deny' ? value : 'ask';
 }
 
 function getLanguageLabel(langCode) {
@@ -347,6 +371,66 @@ function updateHomepageSettingsUi({ syncInput = false } = {}) {
   if (syncInput) {
     inputHomepage.value = settings.homepage || '';
   }
+}
+
+function ensurePermissionRulesSettings() {
+  if (!settings.permissionRules || typeof settings.permissionRules !== 'object') {
+    settings.permissionRules = {};
+  }
+
+  PERMISSION_RULE_DEFINITIONS.forEach(({ key }) => {
+    settings.permissionRules[key] = normalizePermissionRuleValue(settings.permissionRules[key]);
+  });
+
+  return settings.permissionRules;
+}
+
+function renderPermissionRules() {
+  if (!permissionRulesList) return;
+
+  const rules = ensurePermissionRulesSettings();
+  permissionRulesList.innerHTML = '';
+
+  PERMISSION_RULE_DEFINITIONS.forEach(({ key, labelKey }) => {
+    const row = document.createElement('div');
+    row.className = 'permission-rule-item';
+
+    const name = document.createElement('label');
+    name.className = 'permission-rule-name';
+    name.setAttribute('for', `permission-rule-${key}`);
+    name.textContent = t(labelKey);
+
+    const select = document.createElement('select');
+    select.id = `permission-rule-${key}`;
+    select.className = 'setting-select permission-rule-select';
+
+    [
+      { value: 'ask', label: t('permissionBehaviorAsk') },
+      { value: 'allow', label: t('permissionAllow') },
+      { value: 'deny', label: t('permissionDeny') }
+    ].forEach((optionData) => {
+      const option = document.createElement('option');
+      option.value = optionData.value;
+      option.textContent = optionData.label;
+      if (optionData.value === rules[key]) {
+        option.selected = true;
+      }
+      select.appendChild(option);
+    });
+
+    select.onchange = async () => {
+      const permissionRules = {
+        ...ensurePermissionRulesSettings(),
+        [key]: normalizePermissionRuleValue(select.value)
+      };
+      settings = await window.ag.settingsSet({ permissionRules });
+      ensurePermissionRulesSettings();
+    };
+
+    row.appendChild(name);
+    row.appendChild(select);
+    permissionRulesList.appendChild(row);
+  });
 }
 
 function applyTheme(theme) {
@@ -665,6 +749,7 @@ btnSettings.onclick = async () => {
   applyTheme(settings.theme);
   applyLang(settings.lang || DEFAULT_LANG);
   updateHomepageSettingsUi({ syncInput: true });
+  renderPermissionRules();
   showPanel(panelSettings);
 };
 btnCloseSettings.onclick = () => hideAllPanels();
@@ -681,7 +766,7 @@ panelOverlay.onclick = () => hideAllPanels();
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && permissionRequestState) {
     e.preventDefault();
-    submitPermissionResponse('deny');
+    submitPermissionResponse(permissionRequestState.kind === 'notice' ? 'allow' : 'deny');
     return;
   }
   if (e.key === 'Escape' && activePanel) hideAllPanels();
@@ -695,6 +780,9 @@ function closePermissionPrompt() {
   permissionRemember.checked = false;
   permissionSources.innerHTML = '';
   permissionSources.classList.add('hidden');
+  permissionSite.classList.remove('hidden');
+  permissionOriginRow.classList.remove('hidden');
+  btnPermissionDeny.classList.remove('hidden');
   btnPermissionAlwaysAllow.classList.add('hidden');
   btnPermissionAlwaysAllow.textContent = '';
   permissionNote.textContent = '';
@@ -747,14 +835,17 @@ function showPermissionPrompt(payload) {
 
   permissionTitle.textContent = payload.title || '';
   permissionSite.textContent = payload.site || '';
+  permissionSite.classList.toggle('hidden', !payload.site);
   permissionMessage.textContent = payload.message || '';
   permissionOriginLabel.textContent = payload.originLabel || '';
   permissionOriginValue.textContent = payload.origin || '';
+  permissionOriginRow.classList.toggle('hidden', !(payload.originLabel || payload.origin));
   permissionRememberText.textContent = payload.rememberLabel || '';
   permissionRememberRow.classList.toggle('hidden', payload.canRemember === false);
   permissionRemember.checked = false;
   btnPermissionDeny.textContent = payload.denyLabel || t('permissionDeny');
-  btnPermissionAllow.textContent = payload.allowLabel || t('permissionAllow');
+  btnPermissionDeny.classList.toggle('hidden', !payload.denyLabel);
+  btnPermissionAllow.textContent = payload.allowLabel || (payload.kind === 'notice' ? t('permissionOk') : t('permissionAllow'));
   btnPermissionAlwaysAllow.textContent = payload.alwaysAllowLabel || '';
   btnPermissionAlwaysAllow.classList.toggle('hidden', !payload.alwaysAllowLabel);
 
