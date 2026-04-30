@@ -1,3 +1,9 @@
+/**
+ * (c) 2026 KickedStorm (kickedstorm.com)
+ * Project: AG Browser
+ * License: GNU AGPLv3
+ * Unauthorized copying of this file is strictly prohibited.
+ */
 const BUILTIN_HOMEPAGE_URL = 'ag://home/';
 const DEFAULT_CUSTOM_HOMEPAGE = 'https://search.kickedstorm.com/';
 const HOMEPAGE_MODE_BUILTIN = 'builtin';
