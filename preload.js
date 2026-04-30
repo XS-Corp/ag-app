@@ -1,3 +1,9 @@
+/**
+ * (c) 2026 KickedStorm (kickedstorm.com)
+ * Project: AG Browser
+ * License: GNU AGPLv3
+ * Unauthorized copying of this file is strictly prohibited.
+ */
 const { contextBridge, ipcRenderer } = require('electron');
 
 window.addEventListener('DOMContentLoaded', () => {
