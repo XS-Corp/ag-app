@@ -1,3 +1,9 @@
+/**
+ * (c) 2026 KickedStorm (kickedstorm.com)
+ * Project: AG Browser
+ * License: GNU AGPLv3
+ * Unauthorized copying of this file is strictly prohibited.
+ */
 (function(root, factory) {
   const api = factory();
   if (typeof module === "object" && module.exports) {
